@@ -6,6 +6,58 @@ Drop one PowerShell script onto any Windows Server, run it as Administrator, and
 
 ---
 
+## Before You Run — Required Steps
+
+> **This script intentionally references offensive security tool names and attack techniques.**
+> Windows Defender will flag it as malicious content. This is expected.
+> Follow the steps below on your **isolated lab VM** before running.
+
+### Step 1 — Disable Windows Defender (Lab VM only)
+
+Open PowerShell as Administrator and run:
+
+```powershell
+# Disable real-time protection
+Set-MpPreference -DisableRealtimeMonitoring $true
+
+# Disable script scanning
+Set-MpPreference -DisableScriptScanning $true
+
+# Or — add the folder to the exclusion list instead of disabling entirely
+Add-MpPreference -ExclusionPath "C:\Users\Administrator\Desktop\AD-Playground-main"
+```
+
+> If you prefer not to disable Defender fully, the exclusion path approach is cleaner.
+> Either way, **this must be done before running the script**.
+
+### Step 2 — Set Execution Policy
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+```
+
+### Step 3 — Run as Administrator
+
+```powershell
+.\AD-Playground.ps1
+```
+
+On first run, select **[1] Setup Baseline** to install AD DS and populate users.
+
+---
+
+## Why Defender Flags It
+
+The script contains strings like tool names, attack command examples, and technique references
+(used as hints and status messages for students). These are **informational strings only** —
+the script does not download, execute, or include any actual offensive tools.
+Defender's heuristic scanning sees the keywords and blocks the file regardless.
+
+This is the same reason frameworks like Empire, PowerSploit, and any AD lab toolkit
+require AV exclusions before use.
+
+---
+
 ## Requirements
 
 | Requirement | Detail |
@@ -14,19 +66,30 @@ Drop one PowerShell script onto any Windows Server, run it as Administrator, and
 | Privileges | Run as **Administrator** |
 | Role | AD DS (script installs it if missing) |
 | PowerShell | 5.1+ |
+| Windows Defender | Disabled or folder excluded (see above) |
 
 ---
 
-## Quick Start
+## Full Setup Sequence (Clean VM)
 
 ```powershell
-# 1. Clone or copy AD-Playground.ps1 to the server
-# 2. Open PowerShell as Administrator
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\AD-Playground.ps1
-```
+# 1. Open PowerShell as Administrator
 
-On first run → select **[1] Setup Baseline** to install AD DS and populate users.
+# 2. Exclude the lab folder from Defender
+Add-MpPreference -ExclusionPath "C:\Path\To\AD-Playground"
+
+# 3. Set execution policy for this session
+Set-ExecutionPolicy Bypass -Scope Process -Force
+
+# 4. Run the script
+cd "C:\Path\To\AD-Playground"
+.\AD-Playground.ps1
+
+# 5. Select [1] Setup Baseline — installs AD DS + populates 44 users, groups, OUs
+# 6. Reboot if prompted (AD DS promotion requires it)
+# 7. Re-run the script and select [1] again to finish user population
+# 8. Navigate to [2] Labs or [3] Scenarios and start practicing
+```
 
 ---
 
@@ -93,13 +156,13 @@ On first run → select **[1] Setup Baseline** to install AD DS and populate use
 
 | # | Name | Difficulty | Chain |
 |---|---|---|---|
-| 1 | New Hire Foothold | Easy | E9 → C1 → C3 → C5 → E3 |
-| 2 | Internal Pivot | Medium | E2 → C4 → C6 → E4 → A1 |
-| 3 | Full Domain Takeover | Hard | E3 → D3 → D2 → P3 → P2 |
-| 4 | APT Simulation — Stealthy Operator | Hard | E4 → A2 → D2 → P1 |
-| 5 | Misconfig Hunt — The Auditor | Medium | E8 → C5 → A3 → A5 → P2 |
-| 6 | Trust Attack — Cross Domain | Hard | E10 → E1 → D3 → A2 → P2 |
-| 7 | Quick CTF — Speed Run | Random | 3 random labs |
+| 1 | New Hire Foothold | Easy | E9 -> C1 -> C3 -> C5 -> E3 |
+| 2 | Internal Pivot | Medium | E2 -> C4 -> C6 -> E4 -> A1 |
+| 3 | Full Domain Takeover | Hard | E3 -> D3 -> D2 -> P3 -> P2 |
+| 4 | APT Simulation - Stealthy Operator | Hard | E4 -> A2 -> D2 -> P1 |
+| 5 | Misconfig Hunt - The Auditor | Medium | E8 -> C5 -> A3 -> A5 -> P2 |
+| 6 | Trust Attack - Cross Domain | Hard | E10 -> E1 -> D3 -> A2 -> P2 |
+| 7 | Quick CTF - Speed Run | Random | 3 random labs |
 
 ---
 
@@ -107,24 +170,24 @@ On first run → select **[1] Setup Baseline** to install AD DS and populate use
 
 ```
 Main Menu
-├── [1] Setup Baseline      — Install AD DS + populate 44 users, groups, OUs
-├── [2] Labs                — Browse and deploy individual technique labs
-│     ├── Enumeration       (E1–E10)
-│     ├── Credential Attacks(C1–C6)
-│     ├── ACL Abuse         (A1–A5)
-│     ├── Delegation        (D1–D3)
-│     ├── Lateral Movement  (L1–L3)
-│     └── Persistence       (P1–P4)
-├── [3] Scenarios           — Deploy chained attack scenarios
-├── [4] Active Lab Status   — See what's currently deployed
-├── [5] Teardown / Clean    — Remove labs individually or all at once
-└── [6] Exit
++-- [1] Setup Baseline      - Install AD DS + populate 44 users, groups, OUs
++-- [2] Labs                - Browse and deploy individual technique labs
+|     +-- Enumeration       (E1-E10)
+|     +-- Credential Attacks(C1-C6)
+|     +-- ACL Abuse         (A1-A5)
+|     +-- Delegation        (D1-D3)
+|     +-- Lateral Movement  (L1-L3)
+|     +-- Persistence       (P1-P4)
++-- [3] Scenarios           - Deploy chained attack scenarios
++-- [4] Active Lab Status   - See what is currently deployed
++-- [5] Teardown / Clean    - Remove labs individually or all at once
++-- [6] Exit
 ```
 
 Each lab menu offers:
-- **Deploy** — configure the vulnerability
-- **Teardown** — cleanly remove it
-- **Show Hints** — 3 progressive hints per lab
+- **Deploy** - configure the vulnerability
+- **Teardown** - cleanly remove it
+- **Show Hints** - 3 progressive hints per lab
 
 ---
 
@@ -140,6 +203,18 @@ Each lab menu offers:
 | [Whisker](https://github.com/eladshamir/Whisker) | Shadow credentials |
 | [Kerbrute](https://github.com/ropnop/kerbrute) | User enumeration and password spraying |
 | [CrackMapExec](https://github.com/byt3bl33d3r/CrackMapExec) | SMB enumeration and lateral movement |
+
+---
+
+## Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `ScriptContainedMaliciousContent` | Disable Defender or add folder exclusion (Step 1 above) |
+| `UnauthorizedAccess` / not digitally signed | Run `Set-ExecutionPolicy Bypass -Scope Process -Force` first |
+| `The term 'Get-ADUser' is not recognized` | Script auto-imports the AD module — ensure AD DS role is installed |
+| Banner shows garbled characters | Run `chcp 65001` in the console before launching the script |
+| Script hangs on baseline setup | AD DS promotion requires a reboot — reboot and re-run, select [1] again |
 
 ---
 
