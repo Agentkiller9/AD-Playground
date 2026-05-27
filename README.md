@@ -9,26 +9,46 @@ Drop one PowerShell script onto any Windows Server, run it as Administrator, and
 ## Before You Run — Required Steps
 
 > **This script intentionally references offensive security tool names and attack techniques.**
-> Windows Defender will flag it as malicious content. This is expected.
-> Follow the steps below on your **isolated lab VM** before running.
+> Windows Defender will block it. Adding a folder exclusion is NOT enough.
+> You must disable AMSI and real-time scanning. Follow all three steps below.
 
-### Step 1 — Disable Windows Defender (Lab VM only)
+---
 
-Open PowerShell as Administrator and run:
+### Why folder exclusions do NOT work
+
+Windows Defender has two separate scanning engines:
+
+| Engine | What it scans | Bypassed by folder exclusion? |
+|---|---|---|
+| **File scanner** | Files on disk | YES |
+| **AMSI** (Antimalware Scan Interface) | Script content **in memory** as PowerShell parses it | **NO** |
+
+The error `ScriptContainedMaliciousContent` is thrown by **AMSI**, not the file scanner.
+AMSI hooks directly into the PowerShell parser and scans the script content before a single
+line runs — completely bypassing any path-based exclusion you configure.
+
+The only fix is to disable real-time monitoring and script scanning at the engine level.
+
+---
+
+### Step 1 — Disable Defender scanning (Lab VM only)
+
+Open PowerShell as Administrator and run **all three**:
 
 ```powershell
-# Disable real-time protection
 Set-MpPreference -DisableRealtimeMonitoring $true
-
-# Disable script scanning
 Set-MpPreference -DisableScriptScanning $true
-
-# Or — add the folder to the exclusion list instead of disabling entirely
-Add-MpPreference -ExclusionPath "C:\Users\Administrator\Desktop\AD-Playground-main"
+Set-MpPreference -DisableIOAVProtection $true
 ```
 
-> If you prefer not to disable Defender fully, the exclusion path approach is cleaner.
-> Either way, **this must be done before running the script**.
+Verify it worked:
+
+```powershell
+Get-MpPreference | Select DisableRealtimeMonitoring, DisableScriptScanning, DisableIOAVProtection
+# All three should return True
+```
+
+> This is safe to do on an isolated lab VM. Never do this on a production or internet-facing machine.
 
 ### Step 2 — Set Execution Policy
 
@@ -48,13 +68,14 @@ On first run, select **[1] Setup Baseline** to install AD DS and populate users.
 
 ## Why Defender Flags It
 
-The script contains strings like tool names, attack command examples, and technique references
-(used as hints and status messages for students). These are **informational strings only** —
-the script does not download, execute, or include any actual offensive tools.
-Defender's heuristic scanning sees the keywords and blocks the file regardless.
+The script contains strings used as student hints and status messages — tool names,
+attack command examples, and technique references. These are **informational strings only**.
+The script does not download, execute, or bundle any actual offensive tools.
 
-This is the same reason frameworks like Empire, PowerSploit, and any AD lab toolkit
-require AV exclusions before use.
+AMSI's heuristic engine pattern-matches on keywords regardless of context, so even
+a string like `"Attack: secretsdump.py [domain]/[user]@[dc]"` inside a `Write-Host`
+call is enough to trigger a block. This is the same reason PowerSploit, Empire, and
+every AD lab toolkit requires AV to be disabled before use.
 
 ---
 
@@ -210,7 +231,7 @@ Each lab menu offers:
 
 | Error | Fix |
 |---|---|
-| `ScriptContainedMaliciousContent` | Disable Defender or add folder exclusion (Step 1 above) |
+| `ScriptContainedMaliciousContent` | AMSI block — folder exclusions do NOT fix this. Run Step 1: `Set-MpPreference -DisableRealtimeMonitoring $true`, `-DisableScriptScanning $true`, `-DisableIOAVProtection $true` |
 | `UnauthorizedAccess` / not digitally signed | Run `Set-ExecutionPolicy Bypass -Scope Process -Force` first |
 | `The term 'Get-ADUser' is not recognized` | Script auto-imports the AD module — ensure AD DS role is installed |
 | Banner shows garbled characters | Run `chcp 65001` in the console before launching the script |
