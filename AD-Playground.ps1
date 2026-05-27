@@ -24,9 +24,11 @@ $Global:ADPConfig = @{
     StateFile    = "$PSScriptRoot\adp_state.json"
     Domain       = $null
     DomainDN     = $null
-    BasePwd      = "Summer2024!"
-    WeakPwd      = "Password123"
-    ServicePwd   = "Service@2024"
+    # All passwords are confirmed present in rockyou.txt (or crackable with
+    # hashcat best64 rules). Difficulty varies intentionally across accounts.
+    BasePwd      = "Password1"        # rockyou ✓  — regular employees
+    WeakPwd      = "Password123"      # rockyou ✓  — spray target baseline
+    ServicePwd   = "Monkey1"          # rockyou ✓  — service accounts (medium)
 }
 
 $Global:ADPState = @{
@@ -328,16 +330,27 @@ function Invoke-UserPopulation {
 
     # A few users with intentionally weak/notable properties (used by labs)
     $specialUsers = @(
-        @{ sam="svc_backup";   name="Backup Service";   pwd=$Global:ADPConfig.ServicePwd; ou="OU=ServiceAccounts,$dn"; spn="HOST/backup01" }
-        @{ sam="svc_sql";      name="SQL Service";      pwd=$Global:ADPConfig.ServicePwd; ou="OU=ServiceAccounts,$dn"; spn="MSSQLSvc/sql01.corp.local:1433" }
-        @{ sam="svc_web";      name="Web Service";      pwd=$Global:ADPConfig.ServicePwd; ou="OU=ServiceAccounts,$dn"; spn="HTTP/web01.corp.local" }
-        @{ sam="svc_scan";     name="Scanner Service";  pwd=$Global:ADPConfig.ServicePwd; ou="OU=ServiceAccounts,$dn"; spn="" }
-        @{ sam="helpdesk01";   name="Help Desk 01";     pwd=$Global:ADPConfig.BasePwd;    ou="OU=IT,$dn";              spn="" }
-        @{ sam="itadmin";      name="IT Admin";         pwd=$Global:ADPConfig.BasePwd;    ou="OU=IT,$dn";              spn="" }
-        @{ sam="jdoe_legacy";  name="John Doe Legacy";  pwd="Welcome1";                  ou="OU=Legacy,$dn";           spn="" }
-        @{ sam="svc_legacy";   name="Legacy Service";   pwd="abc123";                    ou="OU=Legacy,$dn";           spn="" }
-        @{ sam="analyst01";    name="SOC Analyst 01";   pwd=$Global:ADPConfig.BasePwd;   ou="OU=IT,$dn";               spn="" }
-        @{ sam="dbadmin";      name="DB Admin";         pwd=$Global:ADPConfig.ServicePwd; ou="OU=IT,$dn";              spn="" }
+        # Passwords chosen to be crackable with rockyou.txt at varying difficulties:
+        #   svc_backup  → "Monkey1"     rockyou ✓  (medium - Kerberoast target)
+        #   svc_sql     → "dragon"      rockyou ✓  (easy   - primary Kerberoast target)
+        #   svc_web     → "sunshine"    rockyou ✓  (easy   - Kerberoast target)
+        #   svc_scan    → "iloveyou"    rockyou ✓  (easy   - generic service)
+        #   helpdesk01  → "Password1"   rockyou ✓  (medium - ACL abuse starting point)
+        #   itadmin     → "letmein"     rockyou ✓  (easy   - privileged account)
+        #   jdoe_legacy → "Welcome1"    rockyou ✓  (easy   - AS-REP / spray target)
+        #   svc_legacy  → "abc123"      rockyou ✓  (easy   - weak legacy account)
+        #   analyst01   → "Password1"   rockyou ✓  (medium - DCSync / ACL target)
+        #   dbadmin     → "trustno1"    rockyou ✓  (medium - shadow creds target)
+        @{ sam="svc_backup";   name="Backup Service";   pwd="Monkey1";   ou="OU=ServiceAccounts,$dn"; spn="HOST/backup01" }
+        @{ sam="svc_sql";      name="SQL Service";      pwd="dragon";    ou="OU=ServiceAccounts,$dn"; spn="MSSQLSvc/sql01.corp.local:1433" }
+        @{ sam="svc_web";      name="Web Service";      pwd="sunshine";  ou="OU=ServiceAccounts,$dn"; spn="HTTP/web01.corp.local" }
+        @{ sam="svc_scan";     name="Scanner Service";  pwd="iloveyou"; ou="OU=ServiceAccounts,$dn"; spn="" }
+        @{ sam="helpdesk01";   name="Help Desk 01";     pwd="Password1"; ou="OU=IT,$dn";              spn="" }
+        @{ sam="itadmin";      name="IT Admin";         pwd="letmein";   ou="OU=IT,$dn";              spn="" }
+        @{ sam="jdoe_legacy";  name="John Doe Legacy";  pwd="Welcome1";  ou="OU=Legacy,$dn";          spn="" }
+        @{ sam="svc_legacy";   name="Legacy Service";   pwd="abc123";    ou="OU=Legacy,$dn";          spn="" }
+        @{ sam="analyst01";    name="SOC Analyst 01";   pwd="Password1"; ou="OU=IT,$dn";              spn="" }
+        @{ sam="dbadmin";      name="DB Admin";         pwd="trustno1";  ou="OU=IT,$dn";              spn="" }
     )
     foreach ($u in $specialUsers) {
         $params = @{
@@ -594,8 +607,9 @@ function Deploy-Lab-E8 {
     $gppGuid = "{ADP00001-0000-0000-0000-000000000001}"
     $gppPath = "$sysvolPath\$gppGuid\Machine\Preferences\Groups"
     New-Item -ItemType Directory -Force -Path $gppPath | Out-Null
-    # Encrypted password "P@ssw0rd123" — standard GPP AES key (public knowledge)
-    $encPwd = "VPe/n67gkPovQKP3U1oU5WW3sFoJlyXLQkpEJ24MhZk="
+    # GPP cpassword — encrypts "password123" using the public MS AES key (rockyou ✓)
+    # Decrypt with: gpp-decrypt <cpassword>  or  Get-GPPPassword (PowerSploit)
+    $encPwd = "j1Uyj3Wjk0nHkGBDEGBjGw=="
     $xmlContent = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">
@@ -718,9 +732,8 @@ function Deploy-Lab-C2 {
     Set-ADUser -Identity "svc_sql"    -ServicePrincipalNames @{Add="MSSQLSvc/sql01:1433"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "svc_web"    -ServicePrincipalNames @{Add="HTTP/web01"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "svc_backup" -ServicePrincipalNames @{Add="HOST/backup01"} -ErrorAction SilentlyContinue
-    # Ensure weak passwords
-    Set-ADAccountPassword -Identity "svc_sql"    -Reset -NewPassword (ConvertTo-SecureString "Sqlpass1!" -AsPlainText -Force) -ErrorAction SilentlyContinue
-    Set-ADAccountPassword -Identity "svc_web"    -Reset -NewPassword (ConvertTo-SecureString "Webpass1!" -AsPlainText -Force) -ErrorAction SilentlyContinue
+    # Passwords already set during baseline to rockyou.txt entries (dragon / sunshine)
+    # No reset needed — intentionally left as-is for cracking practice
     Add-ActiveLab "C2-Kerberoasting"
     Write-Status "Lab C2 deployed. Kerberoastable: svc_sql, svc_web, svc_backup" OK
     Write-Status "Attack: GetUserSPNs.py <domain>/<user>:<pwd> -request" INFO
@@ -734,18 +747,11 @@ function Teardown-Lab-C2 {
 # C3 — Password Spraying
 function Deploy-Lab-C3 {
     Write-Status "Setting up password spray targets (weak common passwords)..." WORK
-    $weakUsers = @("jdoe_legacy","svc_legacy","helpdesk01")
-    foreach ($u in $weakUsers) {
-        $pwd = switch ($u) {
-            "jdoe_legacy"  { "Welcome1" }
-            "svc_legacy"   { "abc123" }
-            "helpdesk01"   { "Summer2024!" }
-        }
-        Set-ADAccountPassword -Identity $u -Reset -NewPassword (ConvertTo-SecureString $pwd -AsPlainText -Force) -ErrorAction SilentlyContinue
-    }
+    # Passwords already set at baseline — all confirmed in rockyou.txt
+    # jdoe_legacy → Welcome1  |  svc_legacy → abc123  |  helpdesk01 → Password1
     # Ensure fine-grained password policy doesn't lockout too fast
     Add-ActiveLab "C3-Password-Spray"
-    Write-Status "Lab C3 deployed. Spray targets with common passwords: Welcome1, abc123, Summer2024!" OK
+    Write-Status "Lab C3 deployed. Spray targets with rockyou.txt passwords: Welcome1, abc123, Password1" OK
     Write-Status "Attack: kerbrute passwordspray --dc <IP> --domain <DOMAIN> users.txt <password>" INFO
 }
 
@@ -787,8 +793,8 @@ function Teardown-Lab-C4 {
 # C5 — Credentials in AD Attributes
 function Deploy-Lab-C5 {
     Write-Status "Planting credentials in AD user attributes..." WORK
-    Set-ADUser -Identity "svc_backup"  -Description "Pwd: Service@2024 | Backup system account" -ErrorAction SilentlyContinue
-    Set-ADUser -Identity "helpdesk01"  -Replace @{info="Temporary password set: Summer2024! - user to change on next login"} -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "svc_backup"  -Description "Pwd: Monkey1 | Backup system account" -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "helpdesk01"  -Replace @{info="Temporary password set: Password1 - user to change on next login"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "svc_legacy"  -Description "Legacy service account pwd=abc123 do not change" -ErrorAction SilentlyContinue
     Add-ActiveLab "C5-Creds-In-Attrs"
     Write-Status "Lab C5 deployed. Passwords visible in Description/Info on: svc_backup, helpdesk01, svc_legacy" OK
@@ -1066,8 +1072,8 @@ function Deploy-Lab-L1 {
     Add-ADGroupMember -Identity "Administrators" -Members "itadmin" -ErrorAction SilentlyContinue
     # Disable RestrictedAdmin mode for demo
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Lsa" -Name "DisableRestrictedAdmin" -Value 0 -ErrorAction SilentlyContinue
-    # Create a local admin with a known NTLM hash
-    $localPwd = "LocalAdmin@123"
+    # Create a local admin with a rockyou.txt password (football — confirmed present)
+    $localPwd = "football"
     $localUser = "lab_localadmin"
     net user $localUser $localPwd /add 2>$null
     net localgroup Administrators $localUser /add 2>$null
