@@ -720,15 +720,37 @@ function Deploy-Lab-E9 {
 "@ | Set-Content "$sharePath\staff_directory.txt" -Encoding UTF8
     $displayList | Sort-Object | Add-Content "$sharePath\staff_directory.txt"
 
-    # Expose the share anonymously (null session readable)
+    # ── Expose the share via null session (3 layers required on WS 2019/2022) ──
+
+    # Layer 1: Create the SMB share open to Everyone
     New-SmbShare -Name "Staff" -Path $sharePath -FullAccess "Everyone" -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" `
-        -Name "RestrictNullSessAccess" -Value 0 -ErrorAction SilentlyContinue
+
+    # Layer 2: Allow null session access to the server
+    $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    Set-ItemProperty -Path $lsaPath -Name "RestrictNullSessAccess" -Value 0 -ErrorAction SilentlyContinue
+
+    # Layer 3: Explicitly register share in NullSessionShares so SMB2 permits it
+    # (On WS 2019/2022 this is required - registry change alone is not enough)
+    $existing = (Get-ItemProperty -Path $lsaPath -Name "NullSessionShares" -ErrorAction SilentlyContinue).NullSessionShares
+    if ($existing -notcontains "Staff") {
+        $updated = @($existing) + "Staff" | Where-Object { $_ }
+        Set-ItemProperty -Path $lsaPath -Name "NullSessionShares" -Value $updated -ErrorAction SilentlyContinue
+    }
+
+    # Layer 4: Also allow anonymous LSA access for share enumeration
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymous"    -Value 0 -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymousSAM" -Value 0 -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "EveryoneIncludesAnonymous" -Value 1 -ErrorAction SilentlyContinue
+
+    # Layer 5: Restart LanmanServer so all registry changes take effect immediately
+    Write-Status "Restarting LanmanServer to apply null session config..." WORK
+    Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
 
     Add-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 deployed. 5 users added; jsmith + mjohnson have pre-auth disabled." OK
-    Write-Status "Staff share planted: \\[DC]\Staff  (null session readable)" OK
-    Write-Status "students must enumerate the network to find users.txt" INFO
+    Write-Status "Staff share planted: \\$($env:COMPUTERNAME)\Staff  (null session readable)" OK
+    Write-Status "Enumerate with: smbclient -L //[DC_IP]/ -N  or  enum4linux -a [DC_IP]" INFO
 }
 
 function Teardown-Lab-E9 {
@@ -738,8 +760,20 @@ function Teardown-Lab-E9 {
     }
     Remove-SmbShare -Name "Staff" -Force -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force "C:\ADPLab_Staff" -ErrorAction SilentlyContinue
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" `
-        -Name "RestrictNullSessAccess" -Value 1 -ErrorAction SilentlyContinue
+
+    # Restore null session restrictions
+    $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    Set-ItemProperty -Path $lsaPath -Name "RestrictNullSessAccess" -Value 1 -ErrorAction SilentlyContinue
+    $existing = (Get-ItemProperty -Path $lsaPath -Name "NullSessionShares" -ErrorAction SilentlyContinue).NullSessionShares
+    if ($existing) {
+        $updated = $existing | Where-Object { $_ -ne "Staff" }
+        Set-ItemProperty -Path $lsaPath -Name "NullSessionShares" -Value $updated -ErrorAction SilentlyContinue
+    }
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymous"         -Value 1 -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "RestrictAnonymousSAM"      -Value 1 -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name "EveryoneIncludesAnonymous" -Value 0 -ErrorAction SilentlyContinue
+    Restart-Service LanmanServer -Force -ErrorAction SilentlyContinue
+
     Remove-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 cleaned." OK
 }
