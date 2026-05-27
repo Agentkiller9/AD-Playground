@@ -16,6 +16,18 @@
 Set-StrictMode -Off
 $ErrorActionPreference = "SilentlyContinue"
 
+# ── Console encoding — required for Unicode box/block chars on WS 2016 ──────
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
+
+# ── Module imports ────────────────────────────────────────────────────────────
+foreach ($mod in @("ActiveDirectory","GroupPolicy","DnsServer")) {
+    if (-not (Get-Module -Name $mod)) {
+        Import-Module $mod -ErrorAction SilentlyContinue
+    }
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  GLOBAL CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +45,7 @@ $Global:ADPConfig = @{
 
 $Global:ADPState = @{
     BaselineReady = $false
-    ActiveLabs    = @()
+    ActiveLabs    = [System.Collections.ArrayList]@()   # must be ArrayList — fixed arrays have no .Add()
     DeployedAt    = @{}
 }
 
@@ -110,13 +122,12 @@ function Write-MenuItem {
 
 function Write-Status {
     param([string]$Msg, [string]$Type = "INFO")
-    $prefix = switch ($Type) {
-        "OK"   { "[+]"; $col = "Green" }
-        "FAIL" { "[-]"; $col = "Red" }
-        "WARN" { "[!]"; $col = "Yellow" }
-        "WORK" { "[*]"; $col = "Cyan" }
-        default{ "[i]"; $col = "DarkGray" }
-    }
+    # Explicit if/else avoids the switch-scope ambiguity on PS 5.1
+    if     ($Type -eq "OK")   { $prefix = "[+]"; $col = [ConsoleColor]::Green    }
+    elseif ($Type -eq "FAIL") { $prefix = "[-]"; $col = [ConsoleColor]::Red      }
+    elseif ($Type -eq "WARN") { $prefix = "[!]"; $col = [ConsoleColor]::Yellow   }
+    elseif ($Type -eq "WORK") { $prefix = "[*]"; $col = [ConsoleColor]::Cyan     }
+    else                      { $prefix = "[i]"; $col = [ConsoleColor]::DarkGray }
     Write-Color "  $prefix " $col -NoNewline
     Write-Color $Msg White
 }
@@ -157,12 +168,25 @@ function Save-State {
 
 function Load-State {
     if (Test-Path $Global:ADPConfig.StateFile) {
-        $loaded = Get-Content $Global:ADPConfig.StateFile -Raw | ConvertFrom-Json
-        $Global:ADPState.BaselineReady = [bool]$loaded.BaselineReady
-        $Global:ADPState.ActiveLabs    = [System.Collections.ArrayList]@($loaded.ActiveLabs)
-        $h = @{}
-        $loaded.DeployedAt.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }
-        $Global:ADPState.DeployedAt = $h
+        try {
+            $loaded = Get-Content $Global:ADPConfig.StateFile -Raw | ConvertFrom-Json
+            $Global:ADPState.BaselineReady = [bool]$loaded.BaselineReady
+            # Guard against null ActiveLabs in JSON — null would add a null element to the list
+            if ($loaded.ActiveLabs) {
+                $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@($loaded.ActiveLabs)
+            } else {
+                $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@()
+            }
+            $h = @{}
+            if ($loaded.DeployedAt) {
+                $loaded.DeployedAt.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }
+            }
+            $Global:ADPState.DeployedAt = $h
+        } catch {
+            # Corrupt state file — start fresh
+            $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@()
+            $Global:ADPState.DeployedAt = @{}
+        }
     }
 }
 
@@ -1396,7 +1420,7 @@ $Global:LabHints = @{
     "E10" = @("Enumerate trusts: Get-ADTrust -Filter * or nltest /domain_trusts","PowerView: Get-DomainTrust","What direction is the trust? How can SID history abuse cross it?")
     "C1"  = @("Find targets: GetNPUsers.py <domain>/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt — these passwords are intentionally weak")
     "C2"  = @("Request TGS: GetUserSPNs.py <domain>/<user>:<pwd> -request -dc-ip <IP>","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
-    "C3"  = @("Common enterprise passwords: Summer2024!, Welcome1, Password123, abc123","Spray slowly — 1 attempt per user every 30 min to avoid lockout","kerbrute passwordspray or Spray-Passwords.ps1")
+    "C3"  = @("Common enterprise passwords to spray: Welcome1, Password1, abc123, letmein","Spray slowly — 1 attempt per user every 30 min to avoid lockout","kerbrute passwordspray or Spray-Passwords.ps1")
     "C4"  = @("Start Responder: sudo responder -I eth0 -wdF","Wait for any network activity or browse to a non-existent UNC path: \\NONEXISTENT\share","Captured NTLMv2 hashes can be cracked or relayed")
     "C5"  = @("Get-ADUser -Filter * -Properties Description,Info | Select SAMAccountName,Description,Info","Look for patterns like 'pwd:', 'pass:', 'password:' in the output","Which accounts have credentials stored? Can you reuse them?")
     "C6"  = @("The LabTrigger share has a desktop.ini pointing to an attacker UNC path","Update the ATTACKER_IP in the file, then have a domain user browse the share","Capture with Responder, then crack or relay the NTLMv2 hash")
@@ -1719,7 +1743,7 @@ function Show-MainMenu {
         Write-Color "  Baseline: " DarkGray -NoNewline
         Write-Color $baseStatus $baseColor -NoNewline
         Write-Color "    Active Labs: " DarkGray -NoNewline
-        Write-Color $activeCnt Yellow
+        Write-Color "$activeCnt" Yellow
         Write-Host ""
 
         Write-MenuItem "1" "Setup Baseline  (Install AD DS + Populate Users)" Cyan
