@@ -684,10 +684,51 @@ function Deploy-Lab-E9 {
             -Enabled $true -PasswordNeverExpires $true -ErrorAction SilentlyContinue
     }
     # Make 2 of them AS-REP roastable
-    Set-ADAccountControl -Identity "jsmith"    -DoesNotRequirePreAuth $true -ErrorAction SilentlyContinue
-    Set-ADAccountControl -Identity "mjohnson"  -DoesNotRequirePreAuth $true -ErrorAction SilentlyContinue
+    Set-ADAccountControl -Identity "jsmith"   -DoesNotRequirePreAuth $true -ErrorAction SilentlyContinue
+    Set-ADAccountControl -Identity "mjohnson" -DoesNotRequirePreAuth $true -ErrorAction SilentlyContinue
+
+    # --- Simulated OSINT artifact ---
+    # In real engagements students find usernames via LinkedIn, email format guessing,
+    # or exposed internal shares. We simulate this by planting a "staff directory"
+    # on an anonymously readable share - students must enumerate the network to find it.
+    $sharePath = "C:\ADPLab_Staff"
+    New-Item -ItemType Directory -Force -Path $sharePath | Out-Null
+
+    # Pull all current AD users and write them in common username formats
+    $allUsers = Get-ADUser -Filter * -Properties GivenName,Surname,Department | Where-Object { $_.GivenName -and $_.Surname }
+    $samList     = @()
+    $emailList   = @()
+    $displayList = @()
+    foreach ($u in $allUsers) {
+        $fn  = $u.GivenName.ToLower()
+        $ln  = $u.Surname.ToLower()
+        $sam = $u.SamAccountName
+        $samList     += $sam
+        $emailList   += "$sam@$($Global:ADPConfig.Domain)"
+        $displayList += "$($u.GivenName) $($u.Surname) - $($u.Department)"
+    }
+    # users.txt  - samAccountName list (kerbrute / spray format)
+    $samList     | Sort-Object -Unique | Set-Content "$sharePath\users.txt"         -Encoding UTF8
+    # emails.txt - UPN list
+    $emailList   | Sort-Object -Unique | Set-Content "$sharePath\emails.txt"        -Encoding UTF8
+    # staff_directory.txt - human-readable, like a scraped internal page
+    @"
+===================================================
+  $($Global:ADPConfig.Domain.ToUpper()) - Staff Directory
+  (exported from HR portal  -  INTERNAL USE ONLY)
+===================================================
+"@ | Set-Content "$sharePath\staff_directory.txt" -Encoding UTF8
+    $displayList | Sort-Object | Add-Content "$sharePath\staff_directory.txt"
+
+    # Expose the share anonymously (null session readable)
+    New-SmbShare -Name "Staff" -Path $sharePath -FullAccess "Everyone" -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" `
+        -Name "RestrictNullSessAccess" -Value 0 -ErrorAction SilentlyContinue
+
     Add-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 deployed. 5 users added; jsmith + mjohnson have pre-auth disabled." OK
+    Write-Status "Staff share planted: \\[DC]\Staff  (null session readable)" OK
+    Write-Status "students must enumerate the network to find users.txt" INFO
 }
 
 function Teardown-Lab-E9 {
@@ -695,6 +736,10 @@ function Teardown-Lab-E9 {
     foreach ($u in $users) {
         Remove-ADUser -Identity $u -Confirm:$false -ErrorAction SilentlyContinue
     }
+    Remove-SmbShare -Name "Staff" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "C:\ADPLab_Staff" -ErrorAction SilentlyContinue
+    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" `
+        -Name "RestrictNullSessAccess" -Value 1 -ErrorAction SilentlyContinue
     Remove-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 cleaned." OK
 }
@@ -1416,7 +1461,7 @@ $Global:LabHints = @{
     "E6"  = @("Test zone transfer: dig axfr [domain] @[DC_IP]","Or: nmap --script dns-zone-transfer -p 53 [DC_IP]","What hostnames are revealed that DNS normally hides?")
     "E7"  = @("Test: rpcclient -U '' -N [DC_IP]","Try enumdomusers, enumdomgroups inside rpcclient","What info can you gather as an anonymous user?")
     "E8"  = @("SYSVOL is readable by all domain users: ls \\[DC]\SYSVOL","Look for Groups.xml or Services.xml files","Decrypt cpassword with gpp-decrypt or Get-GPPPassword")
-    "E9"  = @("Enumerate users with Kerbrute: kerbrute userenum --dc [IP] --domain [DOM] users.txt","Find AS-REP roastable users: GetNPUsers.py [domain]/ -usersfile users.txt -format hashcat","Crack the hash offline with hashcat -m 18200")
+    "E9"  = @("Start with share enumeration: crackmapexec smb [DC_IP] -u '' -p '' --shares  or  smbclient -L //[DC_IP]/ -N  -- look for an exposed Staff share","Grab the user list from the share: smbclient //[DC_IP]/Staff -N  then  get users.txt","Feed it into AS-REP roasting: GetNPUsers.py [domain]/ -dc-ip [IP] -no-pass -usersfile users.txt -format hashcat")
     "E10" = @("Enumerate trusts: Get-ADTrust -Filter * or nltest /domain_trusts","PowerView: Get-DomainTrust","What direction is the trust? How can SID history abuse cross it?")
     "C1"  = @("Find targets: GetNPUsers.py [domain]/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt  -  these passwords are intentionally weak")
     "C2"  = @("Request TGS: GetUserSPNs.py [domain]/[user]:[pwd] -request -dc-ip [IP]","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
