@@ -44,9 +44,10 @@ $Global:ADPConfig = @{
 }
 
 $Global:ADPState = @{
-    BaselineReady = $false
-    ActiveLabs    = [System.Collections.ArrayList]@()   # must be ArrayList  -  fixed arrays have no .Add()
-    DeployedAt    = @{}
+    BaselineReady  = $false
+    ActiveLabs     = [System.Collections.ArrayList]@()   # must be ArrayList  -  fixed arrays have no .Add()
+    DeployedAt     = @{}
+    ScenarioChain7 = @()   # Speed Run chain persisted so Teardown works after script restart
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +183,10 @@ function Load-State {
                 $loaded.DeployedAt.PSObject.Properties | ForEach-Object { $h[$_.Name] = $_.Value }
             }
             $Global:ADPState.DeployedAt = $h
+            # Restore persisted Speed Run chain so Teardown-Scenario 7 works after restart
+            if ($loaded.ScenarioChain7) {
+                $Global:ADPState.ScenarioChain7 = @($loaded.ScenarioChain7)
+            }
         } catch {
             # Corrupt state file  -  start fresh
             $Global:ADPState.ActiveLabs = [System.Collections.ArrayList]@()
@@ -410,6 +415,37 @@ function Get-DomainDN {
     return (Get-ADDomain).DistinguishedName
 }
 
+function ConvertTo-GPPCPassword {
+    <#
+    .SYNOPSIS Encrypts a plaintext string using the public MS GPP AES-256-CBC key.
+    .NOTES    The key and IV (all zeros) are published in MS14-025. Any instance of this
+              cpassword value is trivially decryptable by any attacker with gpp-decrypt.
+    #>
+    param([string]$Plaintext)
+    try {
+        # Published MS GPP AES key (MS14-025)
+        $key = [byte[]](0x4e,0x99,0x06,0xe8,0xfc,0xb6,0x6c,0xc9,0xfa,0xf4,0x93,0x10,0x62,0x0f,0xfe,0xe8,
+                         0xf4,0x96,0xe8,0x06,0xcc,0x05,0x79,0x90,0x20,0x9b,0x09,0xa4,0x33,0xb6,0x6c,0x1b)
+        $iv    = New-Object byte[] 16   # all zeros
+        $bytes = [System.Text.Encoding]::Unicode.GetBytes($Plaintext)
+        # PKCS7-pad to the next 16-byte boundary
+        $pad   = 16 - ($bytes.Length % 16)
+        if ($pad -eq 0) { $pad = 16 }
+        $padded = $bytes + [byte[]](@($pad) * $pad)
+        $aes = New-Object System.Security.Cryptography.AesCryptoServiceProvider
+        $aes.Key     = $key
+        $aes.IV      = $iv
+        $aes.Mode    = [System.Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [System.Security.Cryptography.PaddingMode]::None
+        $ct  = $aes.CreateEncryptor().TransformFinalBlock($padded, 0, $padded.Length)
+        $aes.Dispose()
+        return [Convert]::ToBase64String($ct)
+    } catch {
+        Write-Status "GPP encryption failed: $_" WARN
+        return $null
+    }
+}
+
 function Show-LabHints {
     param([string]$LabName, [string[]]$Hints)
     Write-Banner
@@ -631,9 +667,10 @@ function Deploy-Lab-E8 {
     $gppGuid = "{ADP00001-0000-0000-0000-000000000001}"
     $gppPath = "$sysvolPath\$gppGuid\Machine\Preferences\Groups"
     New-Item -ItemType Directory -Force -Path $gppPath | Out-Null
-    # GPP cpassword  -  encrypts "password123" using the public MS AES key (rockyou ✓)
+    # GPP cpassword  -  AES-256-CBC with the published MS14-025 key, zero IV
     # Decrypt with: gpp-decrypt [cpassword]  or  Get-GPPPassword (PowerSploit)
-    $encPwd = "j1Uyj3Wjk0nHkGBDEGBjGw=="
+    # ConvertTo-GPPCPassword computes this correctly at runtime so the value is always right.
+    $encPwd = ConvertTo-GPPCPassword "password123"
     $xmlContent = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <Groups clsid="{3125E937-EB16-4b4c-9934-544FC6D24D26}">
@@ -700,13 +737,16 @@ function Deploy-Lab-E9 {
     $emailList   = @()
     $displayList = @()
     foreach ($u in $allUsers) {
+        $sam = $u.SamAccountName
         $fn  = $u.GivenName.ToLower()
         $ln  = $u.Surname.ToLower()
-        $sam = $u.SamAccountName
         $samList     += $sam
+        $samList     += "$($fn.Substring(0,1))$ln"   # flast format (common naming convention)
+        $samList     += "$fn.$ln"                     # first.last format
         $emailList   += "$sam@$($Global:ADPConfig.Domain)"
         $displayList += "$($u.GivenName) $($u.Surname) - $($u.Department)"
     }
+    $samList = $samList | Sort-Object -Unique
     # users.txt  - samAccountName list (kerbrute / spray format)
     $samList     | Sort-Object -Unique | Set-Content "$sharePath\users.txt"         -Encoding UTF8
     # emails.txt - UPN list
@@ -747,8 +787,11 @@ while ($http.IsListening) {
             $resp.ContentLength64 = $bytes.Length
             $resp.OutputStream.Write($bytes, 0, $bytes.Length)
         } else {
-            $fp = Join-Path $root $rel
-            if (Test-Path $fp -PathType Leaf) {
+            # Sanitize: strip directory traversal sequences before building path
+            $safe = $rel -replace '\.\.', '' -replace '[/\\]{2,}', '\'
+            $fp   = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $safe))
+            # Confirm the resolved path is still inside the root directory
+            if ($fp.StartsWith($root) -and (Test-Path $fp -PathType Leaf)) {
                 $bytes = [System.IO.File]::ReadAllBytes($fp)
                 $resp.ContentLength64 = $bytes.Length
                 $resp.OutputStream.Write($bytes, 0, $bytes.Length)
@@ -775,7 +818,21 @@ while ($http.IsListening) {
         -PassThru
     $proc.Id | Set-Content "C:\ADPLab_Staff\.http_pid" -Encoding UTF8
 
-    Start-Sleep -Seconds 2
+    # Wait up to 5 seconds for the listener to actually bind port 8888
+    Write-Status "Waiting for HTTP listener to start..." WORK
+    $up = $false
+    for ($t = 0; $t -lt 10; $t++) {
+        Start-Sleep -Milliseconds 500
+        if (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue) {
+            $up = $true; break
+        }
+    }
+
+    if (-not $up) {
+        Write-Status "HTTP listener did not start on port 8888 (port may be in use or process died)." FAIL
+        Write-Status "Try: Teardown-Lab-E9, then re-deploy." WARN
+        return
+    }
 
     Add-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 deployed. 5 users added; jsmith + mjohnson have pre-auth disabled." OK
@@ -873,8 +930,12 @@ function Deploy-Lab-C2 {
 }
 
 function Teardown-Lab-C2 {
+    # Remove the SPNs that Deploy-Lab-C2 added (not the baseline ones set during population)
+    Set-ADUser -Identity "svc_sql"    -ServicePrincipalNames @{Remove="MSSQLSvc/sql01:1433"} -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "svc_web"    -ServicePrincipalNames @{Remove="HTTP/web01"}           -ErrorAction SilentlyContinue
+    # svc_backup: HOST/backup01 is also from baseline - leave it; the lab adds no new unique SPN for it
     Remove-ActiveLab "C2-Kerberoasting"
-    Write-Status "Lab C2 cleaned (SPNs remain from baseline; passwords reset to service default)." OK
+    Write-Status "Lab C2 cleaned. Lab-added SPNs removed; baseline SPNs preserved." OK
 }
 
 # C3  -  Password Spraying
@@ -1251,22 +1312,34 @@ function Deploy-Lab-L3 {
     # and a long ticket lifetime
     $dn = Get-DomainDN
     # Set MaxTicketAge in Default Domain Policy (longer lifespan for lab stability)
-    $null = & {
-        $gpo = Get-GPO -Name "Default Domain Policy" -ErrorAction SilentlyContinue
-        if ($gpo) {
-            Set-GPRegistryValue -Name "Default Domain Policy" `
-                -Key "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters" `
-                -ValueName "MaxTicketAge" -Type DWord -Value 24 -ErrorAction SilentlyContinue
-        }
+    $gpoChanged = $false
+    $gpo = Get-GPO -Name "Default Domain Policy" -ErrorAction SilentlyContinue
+    if ($gpo) {
+        Set-GPRegistryValue -Name "Default Domain Policy" `
+            -Key "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters" `
+            -ValueName "MaxTicketAge" -Type DWord -Value 24 -ErrorAction SilentlyContinue
+        $gpoChanged = $true
     }
     Add-ActiveLab "L3-Pass-The-Ticket"
-    Write-Status "Lab L3 deployed. Ticket lifetime extended. Target: svc_sql TGS." OK
+    Write-Status "Lab L3 deployed. Target: svc_sql TGS for Pass-the-Ticket practice." OK
+    if ($gpoChanged) {
+        Write-Status "Ticket lifetime extended to 24h via Default Domain Policy." OK
+    } else {
+        Write-Status "GroupPolicy module unavailable - ticket lifetime NOT extended (lab still functional for single-session)." WARN
+    }
     Write-Status "Exploit: Rubeus dump /service:krbtgt then ptt /ticket:[b64]" INFO
 }
 
 function Teardown-Lab-L3 {
+    # Revert the MaxTicketAge GPO change made by Deploy-Lab-L3
+    $gpo = Get-GPO -Name "Default Domain Policy" -ErrorAction SilentlyContinue
+    if ($gpo) {
+        Remove-GPRegistryValue -Name "Default Domain Policy" `
+            -Key "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters" `
+            -ValueName "MaxTicketAge" -ErrorAction SilentlyContinue
+    }
     Remove-ActiveLab "L3-Pass-The-Ticket"
-    Write-Status "Lab L3 cleaned." OK
+    Write-Status "Lab L3 cleaned. Default Domain Policy MaxTicketAge restored." OK
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1475,9 +1548,12 @@ function Invoke-Scenario {
 
     # Speed run  -  random 3 labs
     if ($Id -eq 7) {
-        $all   = $Global:LabDeployMap.Keys | Get-Random -Count 3
-        $s.Chain    = [array]$all
-        $s.Teardown = [array]$all
+        $all   = @($Global:LabDeployMap.Keys | Get-Random -Count 3)
+        $s.Chain    = $all
+        $s.Teardown = $all
+        # Persist so Teardown-Scenario 7 works even after the script is restarted
+        $Global:ADPState.ScenarioChain7 = $all
+        Save-State
     }
 
     Write-Banner
@@ -1501,6 +1577,18 @@ function Invoke-Scenario {
 function Teardown-Scenario {
     param([int]$Id)
     $s = $Global:Scenarios[$Id]
+
+    # Speed Run: restore chain from persisted state if in-memory copy is empty (script was restarted)
+    if ($Id -eq 7 -and $s.Teardown.Count -eq 0) {
+        if ($Global:ADPState.ScenarioChain7.Count -gt 0) {
+            $s.Teardown = $Global:ADPState.ScenarioChain7
+            Write-Status "Restored Speed Run chain from saved state: $($s.Teardown -join ', ')" INFO
+        } else {
+            Write-Status "No Speed Run chain found in saved state. Use Teardown All to clean manually." WARN
+            Pause-Menu; return
+        }
+    }
+
     Write-Banner
     Write-SectionHeader "Tearing Down: $($s.Name)"
     foreach ($labId in $s.Teardown) {
@@ -1806,18 +1894,18 @@ function Show-TeardownMenu {
                     Write-Status "No active labs." INFO
                 } else {
                     foreach ($labId in $active) {
-                        $id = $labId -replace "-.*",""
-                        $key = $Global:LabTeardownMap.Keys | Where-Object { $labId -like "*$_*" -or $labId -eq $_ } | Select-Object -First 1
-                        # Match by prefix
-                        $key2 = $Global:LabTeardownMap.Keys | Where-Object { $labId.StartsWith($_) } | Select-Object -First 1
-                        if (-not $key2) {
-                            # Try extracting just the ID part
-                            $parts = $labId -split "-"
-                            $key2  = $parts[0]
-                        }
-                        if ($Global:LabTeardownMap.ContainsKey($key2)) {
+                        # Extract lab key: sort by descending length so E10 matches before E1
+                        $labKey = $Global:LabTeardownMap.Keys |
+                            Sort-Object { $_.Length } -Descending |
+                            Where-Object { $labId.StartsWith($_) } |
+                            Select-Object -First 1
+                        if (-not $labKey) { $labKey = ($labId -split '-')[0] }   # fallback
+
+                        if ($Global:LabTeardownMap.ContainsKey($labKey)) {
                             Write-Color "  Cleaning $labId..." DarkCyan
-                            & $Global:LabTeardownMap[$key2]
+                            & $Global:LabTeardownMap[$labKey]
+                        } else {
+                            Write-Status "No teardown found for $labId - skipping." WARN
                         }
                     }
                     Write-Status "All active labs cleaned." OK
@@ -1840,6 +1928,241 @@ function Show-TeardownMenu {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  SELF-TEST SUITE
+#  Validates that each active lab is actually deployed and attack-ready.
+#  Each test checks AD state on the DC - no external tools required.
+# ─────────────────────────────────────────────────────────────────────────────
+
+function Test-Pass { param([string]$Msg); Write-Color "    [PASS] " Green -NoNewline; Write-Color $Msg White }
+function Test-Fail { param([string]$Msg); Write-Color "    [FAIL] " Red   -NoNewline; Write-Color $Msg White }
+function Test-Skip { param([string]$Msg); Write-Color "    [SKIP] " DarkGray -NoNewline; Write-Color $Msg DarkGray }
+function Test-Info { param([string]$Msg); Write-Color "    [INFO] " Cyan  -NoNewline; Write-Color $Msg DarkGray }
+
+function Invoke-SelfTest {
+    if (-not (Assert-Baseline)) { return }
+
+    Write-Banner
+    Write-SectionHeader "Self-Test  -  Lab Validation Suite"
+    Write-Color "  Checks every active lab against the live AD state." DarkGray
+    Write-Host ""
+
+    $pass = 0; $fail = 0; $skip = 0
+
+    # ── Helper: run a check and score it ─────────────────────────────────────
+    function Run-Check {
+        param([string]$LabId, [string]$Desc, [scriptblock]$Check)
+        $active = $Global:ADPState.ActiveLabs | Where-Object { $_ -like "$LabId*" }
+        if (-not $active) { $script:skip++; Test-Skip "$LabId  -  $Desc  (not deployed)"; return }
+        try {
+            $ok = & $Check
+            if ($ok) { $script:pass++; Test-Pass "$LabId  -  $Desc" }
+            else      { $script:fail++; Test-Fail "$LabId  -  $Desc" }
+        } catch {
+            $script:fail++; Test-Fail "$LabId  -  $Desc  (exception: $_)"
+        }
+    }
+
+    $dn = Get-DomainDN
+
+    # ── ENUMERATION ───────────────────────────────────────────────────────────
+    Write-Color "  Enumeration Labs" Yellow
+    Write-Host ""
+
+    Run-Check "E1" "jdoe_legacy has password in Description" {
+        $u = Get-ADUser "jdoe_legacy" -Properties Description
+        $u.Description -and $u.Description -match "Welcome1|Temp pwd|pwd"
+    }
+    Run-Check "E2" "IT_Share SMB share exists" {
+        $null -ne (Get-SmbShare -Name "IT_Share" -ErrorAction SilentlyContinue)
+    }
+    Run-Check "E3" "svc_sql and svc_web have SPNs set" {
+        $sql = (Get-ADUser "svc_sql" -Properties ServicePrincipalName).ServicePrincipalName
+        $web = (Get-ADUser "svc_web" -Properties ServicePrincipalName).ServicePrincipalName
+        ($sql.Count -gt 0) -and ($web.Count -gt 0)
+    }
+    Run-Check "E4" "Help-Desk has GenericAll ACE on analyst01" {
+        $acl = Get-Acl "AD:\$((Get-ADUser analyst01).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "Help-Desk" -and $_.ActiveDirectoryRights -match "GenericAll" }
+    }
+    Run-Check "E5" "jdoe_legacy DoesNotRequirePreAuth = true" {
+        (Get-ADUser "jdoe_legacy" -Properties DoesNotRequirePreAuth).DoesNotRequirePreAuth
+    }
+    Run-Check "E6" "DNS zone allows zone transfer from any server" {
+        $zone = Get-DnsServerZone -Name $Global:ADPConfig.Domain -ErrorAction SilentlyContinue
+        $zone -and $zone.SecureSecondaries -eq "TransferAnyServer"
+    }
+    Run-Check "E7" "RestrictAnonymous = 0 (RPC null sessions open)" {
+        $v = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\LSA" -Name RestrictAnonymous -EA SilentlyContinue).RestrictAnonymous
+        $v -eq 0
+    }
+    Run-Check "E8" "GPP Groups.xml planted in SYSVOL" {
+        $p = "C:\Windows\SYSVOL\sysvol\$($Global:ADPConfig.Domain)\Policies\{ADP00001-0000-0000-0000-000000000001}\Machine\Preferences\Groups\Groups.xml"
+        Test-Path $p
+    }
+    Run-Check "E9" "HTTP listener responding on port 8888" {
+        $null -ne (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue)
+    }
+    Run-Check "E9" "users.txt contains at least 10 usernames" {
+        $f = "C:\ADPLab_Staff\users.txt"
+        (Test-Path $f) -and ((Get-Content $f | Measure-Object -Line).Lines -ge 10)
+    }
+    Run-Check "E10" "jdoe_legacy Description contains trust/SIDHistory reference" {
+        $u = Get-ADUser "jdoe_legacy" -Properties Description
+        $u.Description -and $u.Description -match "trust|SID"
+    }
+
+    Write-Host ""
+
+    # ── CREDENTIAL ATTACKS ────────────────────────────────────────────────────
+    Write-Color "  Credential Attack Labs" Yellow
+    Write-Host ""
+
+    Run-Check "C1" "At least one account has DoesNotRequirePreAuth = true" {
+        (Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true}).Count -gt 0
+    }
+    Run-Check "C2" "svc_sql has at least one SPN set (Kerberoastable)" {
+        (Get-ADUser "svc_sql" -Properties ServicePrincipalName).ServicePrincipalName.Count -gt 0
+    }
+    Run-Check "C3" "Spray target jdoe_legacy has password Welcome1 (test auth)" {
+        # Non-destructive check: just verify the account is enabled and unlocked
+        $u = Get-ADUser "jdoe_legacy" -Properties Enabled,LockedOut
+        $u.Enabled -and -not $u.LockedOut
+    }
+    Run-Check "C4" "LLMNR EnableMulticast = 1" {
+        $v = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name EnableMulticast -EA SilentlyContinue).EnableMulticast
+        $v -eq 1
+    }
+    Run-Check "C5" "svc_backup has password in Description" {
+        $u = Get-ADUser "svc_backup" -Properties Description
+        $u.Description -and $u.Description -match "Monkey1|Pwd:|pwd"
+    }
+    Run-Check "C6" "LabTrigger share exists with desktop.ini" {
+        (Get-SmbShare -Name "LabTrigger" -EA SilentlyContinue) -and (Test-Path "C:\ADPLab_NTLMTrigger\desktop.ini")
+    }
+
+    Write-Host ""
+
+    # ── ACL ABUSE ─────────────────────────────────────────────────────────────
+    Write-Color "  ACL Abuse Labs" Yellow
+    Write-Host ""
+
+    Run-Check "A1" "helpdesk01 has WriteDACL ACE on domain object" {
+        $acl = Get-Acl "AD:\$dn"
+        $acl.Access | Where-Object { $_.IdentityReference -match "helpdesk01" -and $_.ActiveDirectoryRights -match "WriteDacl" }
+    }
+    Run-Check "A2" "helpdesk01 has GenericAll ACE on dbadmin" {
+        $acl = Get-Acl "AD:\$((Get-ADUser dbadmin).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "helpdesk01" -and $_.ActiveDirectoryRights -match "GenericAll" }
+    }
+    Run-Check "A3" "analyst01 has GenericWrite ACE on svc_sql" {
+        $acl = Get-Acl "AD:\$((Get-ADUser svc_sql).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "analyst01" -and $_.ActiveDirectoryRights -match "GenericWrite" }
+    }
+    Run-Check "A4" "helpdesk01 has ForceChangePassword (ExtendedRight) on analyst01" {
+        $acl = Get-Acl "AD:\$((Get-ADUser analyst01).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "helpdesk01" -and $_.ActiveDirectoryRights -match "ExtendedRight" }
+    }
+    Run-Check "A5" "analyst01 has WriteProperty (member) ACE on IT-Admins" {
+        $acl = Get-Acl "AD:\$((Get-ADGroup 'IT-Admins').DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "analyst01" -and $_.ActiveDirectoryRights -match "WriteProperty" }
+    }
+
+    Write-Host ""
+
+    # ── DELEGATION ────────────────────────────────────────────────────────────
+    Write-Color "  Delegation Labs" Yellow
+    Write-Host ""
+
+    Run-Check "D1" "svc_web TrustedForDelegation = true" {
+        (Get-ADUser "svc_web" -Properties TrustedForDelegation).TrustedForDelegation
+    }
+    Run-Check "D2" "svc_sql has TrustedToAuthForDelegation + msDS-AllowedToDelegateTo set" {
+        $u = Get-ADUser "svc_sql" -Properties TrustedToAuthForDelegation,"msDS-AllowedToDelegateTo"
+        $u.TrustedToAuthForDelegation -and $u."msDS-AllowedToDelegateTo".Count -gt 0
+    }
+    Run-Check "D3" "analyst01 has GenericWrite ACE on the DC computer object" {
+        $acl = Get-Acl "AD:\$((Get-ADComputer $env:COMPUTERNAME).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "analyst01" -and $_.ActiveDirectoryRights -match "GenericWrite" }
+    }
+
+    Write-Host ""
+
+    # ── LATERAL MOVEMENT ──────────────────────────────────────────────────────
+    Write-Color "  Lateral Movement Labs" Yellow
+    Write-Host ""
+
+    Run-Check "L1" "lab_localadmin local account exists" {
+        $null -ne (Get-LocalUser "lab_localadmin" -ErrorAction SilentlyContinue)
+    }
+    Run-Check "L2" "svc_sql KerberosEncryptionType includes RC4" {
+        $u = Get-ADUser "svc_sql" -Properties KerberosEncryptionType
+        $u.KerberosEncryptionType -band 4   # RC4 = 0x4
+    }
+    Run-Check "L3" "svc_sql exists and has an active SPN for ticket extraction" {
+        (Get-ADUser "svc_sql" -Properties ServicePrincipalName).ServicePrincipalName.Count -gt 0
+    }
+
+    Write-Host ""
+
+    # ── PERSISTENCE ───────────────────────────────────────────────────────────
+    Write-Color "  Persistence Labs" Yellow
+    Write-Host ""
+
+    Run-Check "P1" "analyst01 has GenericAll ACE on AdminSDHolder" {
+        $sdh = "CN=AdminSDHolder,CN=System,$dn"
+        $acl = Get-Acl "AD:\$sdh"
+        $acl.Access | Where-Object { $_.IdentityReference -match "analyst01" -and $_.ActiveDirectoryRights -match "GenericAll" }
+    }
+    Run-Check "P2" "analyst01 has DCSync ExtendedRight (Replicating Directory Changes)" {
+        $acl = Get-Acl "AD:\$dn"
+        $acl.Access | Where-Object {
+            $_.IdentityReference -match "analyst01" -and
+            $_.ActiveDirectoryRights -match "ExtendedRight" -and
+            $_.ObjectType -eq [guid]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+        }
+    }
+    Run-Check "P3" "helpdesk01 has WriteProperty (msDS-KeyCredentialLink) on dbadmin" {
+        $acl = Get-Acl "AD:\$((Get-ADUser dbadmin).DistinguishedName)"
+        $acl.Access | Where-Object { $_.IdentityReference -match "helpdesk01" -and $_.ActiveDirectoryRights -match "WriteProperty" }
+    }
+    Run-Check "P4" "P2 DCSync rights present (P4 prereq)" {
+        $acl = Get-Acl "AD:\$dn"
+        $acl.Access | Where-Object { $_.IdentityReference -match "analyst01" -and $_.ActiveDirectoryRights -match "ExtendedRight" }
+    }
+
+    Write-Host ""
+
+    # ── CRACKABILITY SPOT-CHECK ───────────────────────────────────────────────
+    Write-Color "  Password / Crackability Checks" Yellow
+    Write-Host ""
+
+    Test-Info "Key rockyou.txt passwords in use (no live auth check - informational only):"
+    Test-Info "  jdoe_legacy  : Welcome1    (AS-REP/spray target)"
+    Test-Info "  svc_sql      : dragon      (Kerberoast - easy)"
+    Test-Info "  svc_web      : sunshine    (Kerberoast - easy)"
+    Test-Info "  svc_backup   : Monkey1     (Kerberoast - medium)"
+    Test-Info "  itadmin      : letmein     (DA escalation path)"
+    Test-Info "  lab_localadmin: football   (PTH local admin)"
+
+    Write-Host ""
+
+    # ── SUMMARY ───────────────────────────────────────────────────────────────
+    Write-Color "  ┌────────────────────────────────────────────────┐" DarkCyan
+    Write-Color "  │  Results: " DarkCyan -NoNewline
+    Write-Color "$pass PASS  " Green -NoNewline
+    Write-Color "$fail FAIL  " Red -NoNewline
+    Write-Color "$skip SKIP" DarkGray -NoNewline
+    Write-Color "             │" DarkCyan
+    Write-Color "  └────────────────────────────────────────────────┘" DarkCyan
+
+    if ($fail -gt 0) {
+        Write-Host ""
+        Write-Status "$fail check(s) failed. Deploy the relevant lab or re-run after deploying." WARN
+    }
+    Pause-Menu
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MAIN MENU
 # ─────────────────────────────────────────────────────────────────────────────
 function Show-MainMenu {
@@ -1857,13 +2180,14 @@ function Show-MainMenu {
 
         Write-MenuItem "1" "Setup Baseline  (Install AD DS + Populate Users)" Cyan
         Write-Host ""
-        Write-MenuItem "2" "Labs            (31 individual technique labs)"   Yellow
-        Write-MenuItem "3" "Scenarios       (7 chained attack scenarios)"     Green
+        Write-MenuItem "2" "Labs            (31 individual technique labs)"    Yellow
+        Write-MenuItem "3" "Scenarios       (7 chained attack scenarios)"      Green
         Write-Host ""
         Write-MenuItem "4" "Active Lab Status"  DarkCyan
         Write-MenuItem "5" "Teardown / Clean"   Red
+        Write-MenuItem "6" "Self-Test Suite"    Green
         Write-Host ""
-        Write-MenuItem "6" "Exit"               DarkGray
+        Write-MenuItem "7" "Exit"               DarkGray
         Write-Host ""
 
         $choice = Get-MenuChoice "Select"
@@ -1873,7 +2197,8 @@ function Show-MainMenu {
             "3" { Show-ScenariosMenu }
             "4" { Show-StatusMenu }
             "5" { Show-TeardownMenu }
-            "6" {
+            "6" { Invoke-SelfTest }
+            "7" {
                 Write-Host ""
                 Write-Color "  Stay sharp. Good hunting." DarkGray
                 Write-Host ""
