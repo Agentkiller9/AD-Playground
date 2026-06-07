@@ -760,85 +760,63 @@ function Deploy-Lab-E9 {
 "@ | Set-Content "$sharePath\staff_directory.txt" -Encoding UTF8
     $displayList | Sort-Object | Add-Content "$sharePath\staff_directory.txt"
 
-    # ── Spin up a lightweight HTTP listener (unauthenticated) on port 8888 ──────
-    # Simulates an exposed internal file portal (HR portal, internal wiki, etc.).
-    # This approach is used instead of SMB null sessions because Windows Server 2022
-    # enforces SMB signing at the transport layer - no registry setting can override
-    # it for unauthenticated connections. HTTP has no such restriction.
-    $listenerScript = @'
-$http = New-Object System.Net.HttpListener
-$http.Prefixes.Add("http://+:8888/")
-$http.Start()
-while ($http.IsListening) {
-    try {
-        $ctx  = $http.GetContext()
-        $req  = $ctx.Request
-        $resp = $ctx.Response
-        $rel  = $req.Url.LocalPath.TrimStart("/")
-        $root = "C:\ADPLab_Staff"
-        if ($rel -eq "" -or $rel -eq "/") {
-            $files = Get-ChildItem $root -File | Select-Object -ExpandProperty Name
-            $html  = "<html><body style='font-family:monospace;padding:20px'>"
-            $html += "<h2>SecOps Corp - Staff Portal</h2><p>INTERNAL USE ONLY</p><ul>"
-            foreach ($f in $files) { $html += "<li><a href='/$f'>$f</a></li>" }
-            $html += "</ul></body></html>"
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
-            $resp.ContentType = "text/html"
-            $resp.ContentLength64 = $bytes.Length
-            $resp.OutputStream.Write($bytes, 0, $bytes.Length)
-        } else {
-            # Sanitize: strip directory traversal sequences before building path
-            $safe = $rel -replace '\.\.', '' -replace '[/\\]{2,}', '\'
-            $fp   = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($root, $safe))
-            # Confirm the resolved path is still inside the root directory
-            if ($fp.StartsWith($root) -and (Test-Path $fp -PathType Leaf)) {
-                $bytes = [System.IO.File]::ReadAllBytes($fp)
-                $resp.ContentLength64 = $bytes.Length
-                $resp.OutputStream.Write($bytes, 0, $bytes.Length)
-            } else {
-                $resp.StatusCode = 404
-                $errBytes = [System.Text.Encoding]::UTF8.GetBytes("Not found")
-                $resp.ContentLength64 = $errBytes.Length
-                $resp.OutputStream.Write($errBytes, 0, $errBytes.Length)
-            }
-        }
-        $resp.OutputStream.Close()
-    } catch {}
-}
-'@
-    $listenerScript | Set-Content "C:\ADPLab_Staff\.http_listener.ps1" -Encoding UTF8
+    # ── Expose files via IIS with directory browsing enabled ─────────────────
+    # Simulates a Domain Controller running IIS with an internal staff portal
+    # misconfigured to allow anonymous directory listing - a realistic and common
+    # pentest finding. Students enumerate with nmap, then browse/download via curl.
 
-    # Open firewall port 8888 inbound
-    netsh advfirewall firewall delete rule name="ADPLab-E9-HTTP" | Out-Null
-    netsh advfirewall firewall add rule name="ADPLab-E9-HTTP" dir=in action=allow protocol=TCP localport=8888 | Out-Null
+    # Install IIS if not already present (one-time Windows feature install)
+    $iisFeature = Get-WindowsFeature -Name "Web-Server" -ErrorAction SilentlyContinue
+    if ($iisFeature -and -not $iisFeature.Installed) {
+        Write-Status "Installing IIS (Web-Server feature - first time only, ~60 s)..." WORK
+        Install-WindowsFeature -Name "Web-Server" -IncludeManagementTools | Out-Null
+    }
 
-    # Launch as a detached hidden process so it survives past this PS session
-    $proc = Start-Process powershell.exe `
-        -ArgumentList "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"C:\ADPLab_Staff\.http_listener.ps1`"" `
-        -PassThru
-    $proc.Id | Set-Content "C:\ADPLab_Staff\.http_pid" -Encoding UTF8
+    # Copy lab files into a /staff/ subdirectory under the default IIS site
+    $wwwStaff = "C:\inetpub\wwwroot\staff"
+    New-Item -ItemType Directory -Force -Path $wwwStaff | Out-Null
+    Copy-Item "$sharePath\*" $wwwStaff -Force -ErrorAction SilentlyContinue
 
-    # Wait up to 5 seconds for the listener to actually bind port 8888
-    Write-Status "Waiting for HTTP listener to start..." WORK
+    # web.config: enable directory browsing, disable default document so the
+    # file listing is shown immediately when students browse to /staff/
+    @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <directoryBrowse enabled="true" />
+    <defaultDocument enabled="false" />
+  </system.webServer>
+</configuration>
+"@ | Set-Content "$wwwStaff\web.config" -Encoding UTF8
+
+    # Ensure the IIS service is running
+    Start-Service W3SVC -ErrorAction SilentlyContinue
+
+    # Allow inbound HTTP on port 80 through Windows Firewall
+    netsh advfirewall firewall delete rule name="ADPLab-E9-IIS" | Out-Null
+    netsh advfirewall firewall add rule name="ADPLab-E9-IIS" dir=in action=allow protocol=TCP localport=80 | Out-Null
+
+    # Verify IIS is actually listening
+    Write-Status "Waiting for IIS to start on port 80..." WORK
     $up = $false
     for ($t = 0; $t -lt 10; $t++) {
         Start-Sleep -Milliseconds 500
-        if (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue) {
+        if (Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue) {
             $up = $true; break
         }
     }
 
     if (-not $up) {
-        Write-Status "HTTP listener did not start on port 8888 (port may be in use or process died)." FAIL
-        Write-Status "Try: Teardown-Lab-E9, then re-deploy." WARN
+        Write-Status "IIS is not listening on port 80. Check IIS installation." FAIL
+        Write-Status "Run: Install-WindowsFeature Web-Server -IncludeManagementTools" INFO
         return
     }
 
     Add-ActiveLab "E9-User-Enum"
     Write-Status "Lab E9 deployed. 5 users added; jsmith + mjohnson have pre-auth disabled." OK
-    Write-Status "HTTP staff portal live: http://$($env:COMPUTERNAME):8888/" OK
-    Write-Status "Grab user list : curl http://[DC_IP]:8888/users.txt -o users.txt" INFO
-    Write-Status "Then AS-REP    : GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat" INFO
+    Write-Status "IIS staff portal : http://$($env:COMPUTERNAME)/staff/" OK
+    Write-Status "Grab user list   : curl http://[DC_IP]/staff/users.txt -o users.txt" INFO
+    Write-Status "Then AS-REP      : GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat" INFO
 }
 
 function Teardown-Lab-E9 {
@@ -847,22 +825,16 @@ function Teardown-Lab-E9 {
         Remove-ADUser -Identity $u -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    # Stop the HTTP listener process - try saved PID first, then fall back to port scan
-    $pidFile = "C:\ADPLab_Staff\.http_pid"
-    if (Test-Path $pidFile) {
-        $savedPid = [int](Get-Content $pidFile -ErrorAction SilentlyContinue)
-        if ($savedPid) { Stop-Process -Id $savedPid -Force -ErrorAction SilentlyContinue }
-    }
-    # Fallback: kill whatever is listening on 8888 (catches orphaned processes)
-    $owningProc = (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue).OwningProcess
-    if ($owningProc) { Stop-Process -Id $owningProc -Force -ErrorAction SilentlyContinue }
+    # Remove the IIS /staff/ directory - do NOT stop IIS or uninstall Web-Server
+    # since IIS may have been present before the lab was deployed.
+    Remove-Item -Recurse -Force "C:\inetpub\wwwroot\staff" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force "C:\ADPLab_Staff"           -ErrorAction SilentlyContinue
 
-    # Remove firewall rule and file directory
-    netsh advfirewall firewall delete rule name="ADPLab-E9-HTTP" | Out-Null
-    Remove-Item -Recurse -Force "C:\ADPLab_Staff" -ErrorAction SilentlyContinue
+    # Remove the firewall rule added during deploy
+    netsh advfirewall firewall delete rule name="ADPLab-E9-IIS" | Out-Null
 
     Remove-ActiveLab "E9-User-Enum"
-    Write-Status "Lab E9 cleaned." OK
+    Write-Status "Lab E9 cleaned. IIS /staff directory removed (IIS itself left intact)." OK
 }
 
 # E10  -  Trust Enumeration
@@ -1613,7 +1585,7 @@ $Global:LabHints = @{
     "E6"  = @("Test zone transfer: dig axfr [domain] @[DC_IP]","Or: nmap --script dns-zone-transfer -p 53 [DC_IP]","What hostnames are revealed that DNS normally hides?")
     "E7"  = @("Test: rpcclient -U '' -N [DC_IP]","Try enumdomusers, enumdomgroups inside rpcclient","What info can you gather as an anonymous user?")
     "E8"  = @("SYSVOL is readable by all domain users: ls \\[DC]\SYSVOL","Look for Groups.xml or Services.xml files","Decrypt cpassword with gpp-decrypt or Get-GPPPassword")
-    "E9"  = @("Port scan for unexpected services: nmap -sV -p 8080,8888,8443,9090 [DC_IP]  -- look for an HTTP server on a non-standard port","Browse and download the exposed file portal: curl http://[DC_IP]:8888/  then  curl http://[DC_IP]:8888/users.txt -o users.txt","Feed the list into AS-REP roasting: GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat  then  hashcat -m 18200 hashes.txt rockyou.txt")
+    "E9"  = @("Run an nmap service scan: nmap -sV -p 80,443,8080,8443 [DC_IP]  -- it is uncommon for a DC to run a web server. What do you find?","Browse the exposed IIS directory listing (anonymous access, no login required): curl http://[DC_IP]/staff/  then download the user list:  curl http://[DC_IP]/staff/users.txt -o users.txt","Feed the list into AS-REP roasting: GetNPUsers.py [domain]/ -dc-ip [DC_IP] -no-pass -usersfile users.txt -format hashcat  then  hashcat -m 18200 hashes.txt rockyou.txt")
     "E10" = @("Enumerate trusts: Get-ADTrust -Filter * or nltest /domain_trusts","PowerView: Get-DomainTrust","What direction is the trust? How can SID history abuse cross it?")
     "C1"  = @("Find targets: GetNPUsers.py [domain]/ -request -no-pass -usersfile users.txt","The hash format is Kerberos 5 AS-REQ Pre-Auth etype 23 (hashcat mode 18200)","Wordlist: rockyou.txt  -  these passwords are intentionally weak")
     "C2"  = @("Request TGS: GetUserSPNs.py [domain]/[user]:[pwd] -request -dc-ip [IP]","Crack with hashcat -m 13100 (Kerberos 5 TGS-REP etype 23)","Which service accounts have weak passwords? Try common service passwords")
@@ -1731,7 +1703,7 @@ $Global:LabCatalog = @{
         @{Id="E6";  Name="DNS Zone Transfer"; Desc="Enables zone transfers from any host for internal DNS enumeration."}
         @{Id="E7";  Name="RPC Enumeration"; Desc="Enables RPC null sessions for anonymous user/group enumeration."}
         @{Id="E8";  Name="GPO / GPP Password Enumeration"; Desc="Plants cpassword entries in SYSVOL for GPP credential discovery."}
-        @{Id="E9";  Name="User Enumeration (Kerbrute targets)"; Desc="Creates AS-REP roastable users and valid username list."}
+        @{Id="E9";  Name="User Enumeration (IIS exposed directory)"; Desc="Installs IIS, enables anonymous directory browsing on /staff/ with users.txt, emails.txt and staff_directory.txt. Simulates a DC running an internal web server with no access control."}
         @{Id="E10"; Name="Trust Enumeration"; Desc="Simulates domain trust artifacts for enumeration practice."}
     )
     Credential = @(
@@ -1999,12 +1971,18 @@ function Invoke-SelfTest {
         $p = "C:\Windows\SYSVOL\sysvol\$($Global:ADPConfig.Domain)\Policies\{ADP00001-0000-0000-0000-000000000001}\Machine\Preferences\Groups\Groups.xml"
         Test-Path $p
     }
-    Run-Check "E9" "HTTP listener responding on port 8888" {
-        $null -ne (Get-NetTCPConnection -LocalPort 8888 -State Listen -ErrorAction SilentlyContinue)
+    Run-Check "E9" "IIS (W3SVC) is running and listening on port 80" {
+        $svc = Get-Service W3SVC -ErrorAction SilentlyContinue
+        $svc -and $svc.Status -eq "Running" -and
+        ($null -ne (Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue))
     }
-    Run-Check "E9" "users.txt contains at least 10 usernames" {
-        $f = "C:\ADPLab_Staff\users.txt"
+    Run-Check "E9" "IIS /staff/ directory exists with users.txt (>= 10 entries)" {
+        $f = "C:\inetpub\wwwroot\staff\users.txt"
         (Test-Path $f) -and ((Get-Content $f | Measure-Object -Line).Lines -ge 10)
+    }
+    Run-Check "E9" "Directory browsing enabled in /staff/web.config" {
+        $wc = "C:\inetpub\wwwroot\staff\web.config"
+        (Test-Path $wc) -and ((Get-Content $wc -Raw) -match 'directoryBrowse enabled="true"')
     }
     Run-Check "E10" "jdoe_legacy Description contains trust/SIDHistory reference" {
         $u = Get-ADUser "jdoe_legacy" -Properties Description
