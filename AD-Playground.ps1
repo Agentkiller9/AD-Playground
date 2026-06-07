@@ -2126,9 +2126,9 @@ function Invoke-SelfTest {
         $null -ne (Get-ADUser "lab_localadmin" -ErrorAction SilentlyContinue)
     }
     Run-Check "L2" "svc_sql KerberosEncryptionType includes RC4" {
-        # KerberosEncryptionType is ADPropertyValueCollection - cast to int before bitwise op
+        # ADPropertyValueCollection cannot be cast to int; check string representation instead
         $enc = (Get-ADUser "svc_sql" -Properties KerberosEncryptionType).KerberosEncryptionType
-        ([int]$enc -band 4) -or ($enc -match "RC4")   # RC4 = bit 2 (value 4)
+        "$enc" -match "RC4"
     }
     Run-Check "L3" "svc_sql exists and has an active SPN for ticket extraction" {
         (Get-ADUser "svc_sql" -Properties ServicePrincipalName).ServicePrincipalName.Count -gt 0
