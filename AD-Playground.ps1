@@ -510,7 +510,7 @@ function Teardown-Lab-E1 {
         $acl.RemoveAccessRule($_) | Out-Null
     }
     Set-Acl -Path $aclPath -AclObject $acl -ErrorAction SilentlyContinue
-    Set-ADUser -Identity "jdoe_legacy" -Description "" -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "jdoe_legacy" -Clear description -ErrorAction SilentlyContinue
     Remove-ActiveLab "E1-LDAP-Enum"
     Write-Status "Lab E1 cleaned." OK
 }
@@ -620,7 +620,7 @@ function Deploy-Lab-E5 {
 function Teardown-Lab-E5 {
     Set-ADUser -Identity "helpdesk01" -Replace @{adminCount=0} -ErrorAction SilentlyContinue
     Set-ADAccountControl -Identity "jdoe_legacy" -DoesNotRequirePreAuth $false -ErrorAction SilentlyContinue
-    Set-ADUser -Identity "svc_legacy" -Description "" -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "svc_legacy" -Clear description -ErrorAction SilentlyContinue
     Remove-ActiveLab "E5-PowerView-Targets"
     Write-Status "Lab E5 cleaned." OK
 }
@@ -897,7 +897,7 @@ function Deploy-Lab-E10 {
 }
 
 function Teardown-Lab-E10 {
-    Set-ADUser -Identity "jdoe_legacy" -Description "" -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "jdoe_legacy" -Clear description -ErrorAction SilentlyContinue
     Remove-ActiveLab "E10-Trust-Enum"
     Write-Status "Lab E10 cleaned." OK
 }
@@ -1007,9 +1007,9 @@ function Deploy-Lab-C5 {
 }
 
 function Teardown-Lab-C5 {
-    Set-ADUser -Identity "svc_backup"  -Description "" -ErrorAction SilentlyContinue
-    Set-ADUser -Identity "helpdesk01"  -Replace @{info=""} -ErrorAction SilentlyContinue
-    Set-ADUser -Identity "svc_legacy"  -Description "" -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "svc_backup"  -Clear description -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "helpdesk01"  -Clear info        -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "svc_legacy"  -Clear description -ErrorAction SilentlyContinue
     Remove-ActiveLab "C5-Creds-In-Attrs"
     Write-Status "Lab C5 cleaned." OK
 }
@@ -1272,23 +1272,36 @@ function Teardown-Lab-D3 {
 # L1  -  Pass-the-Hash Setup
 function Deploy-Lab-L1 {
     Write-Status "Setting up Pass-the-Hash targets..." WORK
-    # Disable Protected Users / credential guard where possible
-    # Add itadmin to local admins on the DC (already DA but ensuring local admin path)
-    Add-ADGroupMember -Identity "Administrators" -Members "itadmin" -ErrorAction SilentlyContinue
-    # Disable RestrictedAdmin mode for demo
+    # Disable RestrictedAdmin mode (required for WCE/Mimikatz PTH)
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Lsa" -Name "DisableRestrictedAdmin" -Value 0 -ErrorAction SilentlyContinue
-    # Create a local admin with a rockyou.txt password (football  -  confirmed present)
-    $localPwd = "football"
+
+    # Create a privileged domain account with a known crackable password.
+    # Note: DCs have no local SAM, so "net user /add" silently fails.
+    # We create a domain user instead - which is the realistic PTH target anyway
+    # (extract NTLM via secretsdump, relay/reuse against other domain systems).
+    $localPwd = "football"   # rockyou.txt confirmed
     $localUser = "lab_localadmin"
-    net user $localUser $localPwd /add 2>$null
-    net localgroup Administrators $localUser /add 2>$null
+    $dn = Get-DomainDN
+    New-ADUser -Name $localUser -SamAccountName $localUser `
+        -UserPrincipalName "$localUser@$($Global:ADPConfig.Domain)" `
+        -Path "OU=IT,$dn" `
+        -AccountPassword (ConvertTo-SecureString $localPwd -AsPlainText -Force) `
+        -Enabled $true -PasswordNeverExpires $true -ErrorAction SilentlyContinue
+    # Add to Domain Admins so the NTLM hash is high-value for PTH
+    Add-ADGroupMember -Identity "Domain Admins" -Members $localUser -ErrorAction SilentlyContinue
+    # Also add itadmin to ensure a known DA hash exists
+    Add-ADGroupMember -Identity "Administrators" -Members "itadmin" -ErrorAction SilentlyContinue
+
     Add-ActiveLab "L1-Pass-The-Hash"
-    Write-Status "Lab L1 deployed. Local admin: $localUser / $localPwd" OK
-    Write-Status "Exploit: secretsdump.py then psexec.py / wmiexec.py -hashes [NTLM]" INFO
+    Write-Status "Lab L1 deployed. PTH target: $localUser / $localPwd (Domain Admin)" OK
+    Write-Status "Step 1 - Dump hashes: secretsdump.py [domain]/Administrator:[pwd]@[DC_IP]" INFO
+    Write-Status "Step 2 - PTH: psexec.py -hashes :[NTLM] [domain]/$localUser@[target]" INFO
 }
 
 function Teardown-Lab-L1 {
-    net user "lab_localadmin" /delete 2>$null
+    Remove-ADGroupMember -Identity "Domain Admins" -Members "lab_localadmin" -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-ADUser -Identity "lab_localadmin" -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Lsa" -Name "DisableRestrictedAdmin" -ErrorAction SilentlyContinue
     Remove-ActiveLab "L1-Pass-The-Hash"
     Write-Status "Lab L1 cleaned." OK
 }
@@ -2109,12 +2122,13 @@ function Invoke-SelfTest {
     Write-Color "  Lateral Movement Labs" Yellow
     Write-Host ""
 
-    Run-Check "L1" "lab_localadmin local account exists" {
-        $null -ne (Get-LocalUser "lab_localadmin" -ErrorAction SilentlyContinue)
+    Run-Check "L1" "lab_localadmin domain account exists" {
+        $null -ne (Get-ADUser "lab_localadmin" -ErrorAction SilentlyContinue)
     }
     Run-Check "L2" "svc_sql KerberosEncryptionType includes RC4" {
-        $u = Get-ADUser "svc_sql" -Properties KerberosEncryptionType
-        $u.KerberosEncryptionType -band 4   # RC4 = 0x4
+        # KerberosEncryptionType is ADPropertyValueCollection - cast to int before bitwise op
+        $enc = (Get-ADUser "svc_sql" -Properties KerberosEncryptionType).KerberosEncryptionType
+        ([int]$enc -band 4) -or ($enc -match "RC4")   # RC4 = bit 2 (value 4)
     }
     Run-Check "L3" "svc_sql exists and has an active SPN for ticket extraction" {
         (Get-ADUser "svc_sql" -Properties ServicePrincipalName).ServicePrincipalName.Count -gt 0
