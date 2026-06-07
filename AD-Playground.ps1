@@ -2228,16 +2228,19 @@ function Show-MainMenu {
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ENTRY POINT
+#  Set $Global:ADP_LibraryMode = $true before dot-sourcing this script to load
+#  all functions without launching the interactive menu (used by test harnesses).
 # ─────────────────────────────────────────────────────────────────────────────
-Load-State
-try {
-    if ($Global:ADPState.BaselineReady) {
-        $dom = Get-ADDomain -ErrorAction SilentlyContinue
-        if ($dom) {
-            $Global:ADPConfig.Domain   = $dom.DNSRoot
-            $Global:ADPConfig.DomainDN = $dom.DistinguishedName
+if (-not $Global:ADP_LibraryMode) {
+    Load-State
+    try {
+        if ($Global:ADPState.BaselineReady) {
+            $dom = Get-ADDomain -ErrorAction SilentlyContinue
+            if ($dom) {
+                $Global:ADPConfig.Domain   = $dom.DNSRoot
+                $Global:ADPConfig.DomainDN = $dom.DistinguishedName
+            }
         }
-    }
-} catch {}
-
-Show-MainMenu
+    } catch {}
+    Show-MainMenu
+}
