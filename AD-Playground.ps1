@@ -275,6 +275,9 @@ function Invoke-BaselineSetup {
     }
 
     Write-Host ""
+    Write-Status "Disabling password complexity policy (required for weak rockyou passwords)..." WORK
+    Disable-PasswordComplexityPolicy
+    Write-Host ""
     Write-Status "Populating AD with realistic users, groups, and OUs..." WORK
     Invoke-UserPopulation
     $Global:ADPState.BaselineReady = $true
@@ -282,6 +285,92 @@ function Invoke-BaselineSetup {
     Write-Host ""
     Write-Status "Baseline complete. Domain: $($Global:ADPConfig.Domain)" OK
     Pause-Menu
+}
+
+function Repair-WeakPasswords {
+    <#
+    .SYNOPSIS Re-applies the weak rockyou.txt passwords to all special users.
+    .NOTES    Use this if a baseline was deployed BEFORE the complexity-policy
+              fix was added - those users will have empty NT hashes and the
+              Kerberoasting / spray / PTH labs will not work until passwords
+              are re-set. Disables complexity policy first, then resets each pwd.
+    #>
+    Disable-PasswordComplexityPolicy
+
+    $repairs = @(
+        @{ sam="svc_backup";   pwd="Monkey1"   }
+        @{ sam="svc_sql";      pwd="dragon"    }
+        @{ sam="svc_web";      pwd="sunshine"  }
+        @{ sam="svc_scan";     pwd="iloveyou"  }
+        @{ sam="helpdesk01";   pwd="Password1" }
+        @{ sam="itadmin";      pwd="letmein"   }
+        @{ sam="jdoe_legacy";  pwd="Welcome1"  }
+        @{ sam="svc_legacy";   pwd="abc123"    }
+        @{ sam="analyst01";    pwd="Password1" }
+        @{ sam="dbadmin";      pwd="trustno1"  }
+        @{ sam="lab_localadmin"; pwd="football" }
+    )
+
+    $fixed = 0
+    foreach ($r in $repairs) {
+        $user = Get-ADUser -Identity $r.sam -ErrorAction SilentlyContinue
+        if (-not $user) { continue }
+        try {
+            Set-ADAccountPassword -Identity $r.sam -Reset `
+                -NewPassword (ConvertTo-SecureString $r.pwd -AsPlainText -Force) `
+                -ErrorAction Stop
+            Set-ADUser -Identity $r.sam -PasswordNeverExpires $true -Enabled $true -ErrorAction SilentlyContinue
+            Write-Status "Reset $($r.sam) password to '$($r.pwd)'" OK
+            $fixed++
+        } catch {
+            Write-Status "Could not reset $($r.sam): $_" FAIL
+        }
+    }
+    Write-Status "Repair complete. $fixed accounts re-keyed." OK
+}
+
+function Disable-PasswordComplexityPolicy {
+    <#
+    .SYNOPSIS Disables password complexity + length policy so weak rockyou.txt
+              passwords (dragon, sunshine, letmein, abc123, etc.) can be set.
+    .NOTES    Without this, New-ADUser silently fails to set the password while
+              still creating the account, leaving service accounts with empty NT
+              hash (31d6cfe0d16ae931b73c59d7e0c089c0) which breaks Kerberoasting,
+              password spraying, and PTH labs.
+    #>
+    try {
+        # Layer 1: Modify LDAP domain attributes directly (takes effect immediately)
+        $dom = Get-ADDomain
+        Set-ADDefaultDomainPasswordPolicy -Identity $dom.DistinguishedName `
+            -ComplexityEnabled $false `
+            -MinPasswordLength 1 `
+            -PasswordHistoryCount 0 `
+            -ReversibleEncryptionEnabled $false `
+            -MaxPasswordAge ([System.TimeSpan]::FromDays(0)) `
+            -MinPasswordAge ([System.TimeSpan]::FromDays(0)) `
+            -ErrorAction SilentlyContinue
+    } catch {}
+
+    # Layer 2: Apply via secedit + Local Security Authority so DC enforces it now
+    $cfgPath = "$env:TEMP\adp_secpol.inf"
+    $dbPath  = "$env:TEMP\adp_secedit.sdb"
+    $cfg = @"
+[Unicode]
+Unicode=yes
+[System Access]
+PasswordComplexity = 0
+MinimumPasswordLength = 1
+PasswordHistorySize = 0
+MaximumPasswordAge = -1
+MinimumPasswordAge = 0
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+"@
+    [System.IO.File]::WriteAllText($cfgPath, $cfg, [System.Text.Encoding]::Unicode)
+    secedit /configure /db $dbPath /cfg $cfgPath /areas SECURITYPOLICY /quiet 2>&1 | Out-Null
+    gpupdate /force /target:computer 2>&1 | Out-Null
+    Write-Status "Password complexity policy disabled." OK
 }
 
 function Invoke-UserPopulation {
@@ -358,22 +447,15 @@ function Invoke-UserPopulation {
     }
 
     # A few users with intentionally weak/notable properties (used by labs)
+    # SPNs reference the actual domain, not hardcoded "corp.local"
+    $domDns = $Global:ADPConfig.Domain
     $specialUsers = @(
-        # Passwords chosen to be crackable with rockyou.txt at varying difficulties:
-        #   svc_backup  → "Monkey1"     rockyou ✓  (medium - Kerberoast target)
-        #   svc_sql     → "dragon"      rockyou ✓  (easy   - primary Kerberoast target)
-        #   svc_web     → "sunshine"    rockyou ✓  (easy   - Kerberoast target)
-        #   svc_scan    → "iloveyou"    rockyou ✓  (easy   - generic service)
-        #   helpdesk01  → "Password1"   rockyou ✓  (medium - ACL abuse starting point)
-        #   itadmin     → "letmein"     rockyou ✓  (easy   - privileged account)
-        #   jdoe_legacy → "Welcome1"    rockyou ✓  (easy   - AS-REP / spray target)
-        #   svc_legacy  → "abc123"      rockyou ✓  (easy   - weak legacy account)
-        #   analyst01   → "Password1"   rockyou ✓  (medium - DCSync / ACL target)
-        #   dbadmin     → "trustno1"    rockyou ✓  (medium - shadow creds target)
+        # Passwords chosen to be crackable with rockyou.txt at varying difficulties.
+        # Password complexity policy is DISABLED at baseline so these all set correctly.
         @{ sam="svc_backup";   name="Backup Service";   pwd="Monkey1";   ou="OU=ServiceAccounts,$dn"; spn="HOST/backup01" }
-        @{ sam="svc_sql";      name="SQL Service";      pwd="dragon";    ou="OU=ServiceAccounts,$dn"; spn="MSSQLSvc/sql01.corp.local:1433" }
-        @{ sam="svc_web";      name="Web Service";      pwd="sunshine";  ou="OU=ServiceAccounts,$dn"; spn="HTTP/web01.corp.local" }
-        @{ sam="svc_scan";     name="Scanner Service";  pwd="iloveyou"; ou="OU=ServiceAccounts,$dn"; spn="" }
+        @{ sam="svc_sql";      name="SQL Service";      pwd="dragon";    ou="OU=ServiceAccounts,$dn"; spn="MSSQLSvc/sql01.$domDns`:1433" }
+        @{ sam="svc_web";      name="Web Service";      pwd="sunshine";  ou="OU=ServiceAccounts,$dn"; spn="HTTP/web01.$domDns" }
+        @{ sam="svc_scan";     name="Scanner Service";  pwd="iloveyou";  ou="OU=ServiceAccounts,$dn"; spn="" }
         @{ sam="helpdesk01";   name="Help Desk 01";     pwd="Password1"; ou="OU=IT,$dn";              spn="" }
         @{ sam="itadmin";      name="IT Admin";         pwd="letmein";   ou="OU=IT,$dn";              spn="" }
         @{ sam="jdoe_legacy";  name="John Doe Legacy";  pwd="Welcome1";  ou="OU=Legacy,$dn";          spn="" }
@@ -382,21 +464,29 @@ function Invoke-UserPopulation {
         @{ sam="dbadmin";      name="DB Admin";         pwd="trustno1";  ou="OU=IT,$dn";              spn="" }
     )
     foreach ($u in $specialUsers) {
+        $secPwd = ConvertTo-SecureString $u.pwd -AsPlainText -Force
         $params = @{
             Name                 = $u.name
             SamAccountName       = $u.sam
             UserPrincipalName    = "$($u.sam)@$($Global:ADPConfig.Domain)"
             Path                 = $u.ou
-            AccountPassword      = (ConvertTo-SecureString $u.pwd -AsPlainText -Force)
+            AccountPassword      = $secPwd
             Enabled              = $true
             PasswordNeverExpires = $true
             ErrorAction          = "SilentlyContinue"
         }
         New-ADUser @params
+
+        # Always reset the password explicitly — handles both new-creation (where
+        # weak passwords may have been silently rejected) and existing-user reruns.
+        # This is the actual fix for the "empty NT hash" bug.
+        Set-ADAccountPassword -Identity $u.sam -Reset -NewPassword $secPwd -ErrorAction SilentlyContinue
+        Set-ADUser -Identity $u.sam -PasswordNeverExpires $true -Enabled $true -ErrorAction SilentlyContinue
+
         if ($u.spn -ne "") {
             Set-ADUser -Identity $u.sam -ServicePrincipalNames @{Add=$u.spn} -ErrorAction SilentlyContinue
         }
-        Write-Status "Special user: $($u.sam)" OK
+        Write-Status "Special user: $($u.sam) (pwd: $($u.pwd))" OK
     }
 
     # Group memberships
@@ -544,16 +634,18 @@ function Teardown-Lab-E2 {
 # E3  -  SPN Enumeration
 function Deploy-Lab-E3 {
     Write-Status "Setting up SPN enumeration targets..." WORK
+    $domDns = $Global:ADPConfig.Domain
     # SPNs already set on svc_backup, svc_sql, svc_web during baseline
     # Add a few more on regular users (misconfigured)
-    Set-ADUser -Identity "dbadmin" -ServicePrincipalNames @{Add="MSSQLSvc/db01:1433","MSSQLSvc/db01.corp.local:1433"} -ErrorAction SilentlyContinue
+    Set-ADUser -Identity "dbadmin" -ServicePrincipalNames @{Add="MSSQLSvc/db01:1433","MSSQLSvc/db01.$domDns`:1433"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "itadmin" -ServicePrincipalNames @{Add="RestrictedKrbHost/dc01"} -ErrorAction SilentlyContinue
     Add-ActiveLab "E3-SPN-Enum"
     Write-Status "Lab E3 deployed. SPNs set on: svc_sql, svc_web, svc_backup, dbadmin, itadmin." OK
 }
 
 function Teardown-Lab-E3 {
-    Set-ADUser -Identity "dbadmin" -ServicePrincipalNames @{Remove="MSSQLSvc/db01:1433","MSSQLSvc/db01.corp.local:1433"} -ErrorAction SilentlyContinue
+    $domDns = $Global:ADPConfig.Domain
+    Set-ADUser -Identity "dbadmin" -ServicePrincipalNames @{Remove="MSSQLSvc/db01:1433","MSSQLSvc/db01.$domDns`:1433"} -ErrorAction SilentlyContinue
     Set-ADUser -Identity "itadmin" -ServicePrincipalNames @{Remove="RestrictedKrbHost/dc01"} -ErrorAction SilentlyContinue
     Remove-ActiveLab "E3-SPN-Enum"
     Write-Status "Lab E3 cleaned." OK
@@ -2165,16 +2257,55 @@ function Invoke-SelfTest {
     Write-Host ""
 
     # ── CRACKABILITY SPOT-CHECK ───────────────────────────────────────────────
-    Write-Color "  Password / Crackability Checks" Yellow
+    Write-Color "  Password / Crackability Checks  (LIVE Kerberos AS-REQ verification)" Yellow
     Write-Host ""
 
-    Test-Info "Key rockyou.txt passwords in use (no live auth check - informational only):"
-    Test-Info "  jdoe_legacy  : Welcome1    (AS-REP/spray target)"
-    Test-Info "  svc_sql      : dragon      (Kerberoast - easy)"
-    Test-Info "  svc_web      : sunshine    (Kerberoast - easy)"
-    Test-Info "  svc_backup   : Monkey1     (Kerberoast - medium)"
-    Test-Info "  itadmin      : letmein     (DA escalation path)"
-    Test-Info "  lab_localadmin: football   (PTH local admin)"
+    # Verify the weak passwords are actually applied by attempting a Kerberos pre-auth.
+    # This catches the "empty NT hash" bug where complexity policy silently drops the
+    # password during account creation.
+    function Test-KerberosPwd {
+        param([string]$User, [string]$Pwd)
+        try {
+            Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+            $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext(
+                [System.DirectoryServices.AccountManagement.ContextType]::Domain,
+                $Global:ADPConfig.Domain)
+            return $ctx.ValidateCredentials($User, $Pwd)
+        } catch { return $false }
+    }
+
+    $pwdMap = [ordered]@{
+        "jdoe_legacy"     = "Welcome1"
+        "helpdesk01"      = "Password1"
+        "analyst01"       = "Password1"
+        "svc_sql"         = "dragon"
+        "svc_web"         = "sunshine"
+        "svc_scan"        = "iloveyou"
+        "svc_backup"      = "Monkey1"
+        "svc_legacy"      = "abc123"
+        "itadmin"         = "letmein"
+        "dbadmin"         = "trustno1"
+        "lab_localadmin"  = "football"
+    }
+    $emptyHashCount = 0
+    foreach ($entry in $pwdMap.GetEnumerator()) {
+        $user = $entry.Key; $pwd = $entry.Value
+        if (-not (Get-ADUser -Identity $user -EA SilentlyContinue)) { continue }
+        $ok = Test-KerberosPwd -User $user -Pwd $pwd
+        if ($ok) {
+            Test-Pass "PWD: $user → '$pwd' (Kerberos auth succeeded)"
+            $script:_stPass++
+        } else {
+            Test-Fail "PWD: $user → '$pwd' (auth failed - account has wrong/empty password)"
+            $script:_stFail++
+            $emptyHashCount++
+        }
+    }
+    if ($emptyHashCount -gt 0) {
+        Write-Host ""
+        Test-Info "WARNING: $emptyHashCount account(s) have wrong passwords (likely created"
+        Test-Info "         before complexity-policy fix). Run [7] Repair Passwords to fix."
+    }
 
     Write-Host ""
 
@@ -2217,9 +2348,10 @@ function Show-MainMenu {
         Write-Host ""
         Write-MenuItem "4" "Active Lab Status"  DarkCyan
         Write-MenuItem "5" "Teardown / Clean"   Red
-        Write-MenuItem "6" "Self-Test Suite"    Green
+        Write-MenuItem "6" "Self-Test Suite"      Green
+        Write-MenuItem "7" "Repair Passwords"     Yellow
         Write-Host ""
-        Write-MenuItem "7" "Exit"               DarkGray
+        Write-MenuItem "8" "Exit"                 DarkGray
         Write-Host ""
 
         $choice = Get-MenuChoice "Select"
@@ -2231,6 +2363,16 @@ function Show-MainMenu {
             "5" { Show-TeardownMenu }
             "6" { Invoke-SelfTest }
             "7" {
+                Write-Banner
+                Write-SectionHeader "Repair: Re-apply Weak Passwords"
+                Write-Color "  Resets all lab account passwords to their intended weak rockyou.txt values." DarkGray
+                Write-Color "  Use this if you deployed a baseline with the original (broken) script." DarkGray
+                Write-Host ""
+                if (-not (Assert-Baseline)) { continue }
+                Repair-WeakPasswords
+                Pause-Menu
+            }
+            "8" {
                 Write-Host ""
                 Write-Color "  Stay sharp. Good hunting." DarkGray
                 Write-Host ""
