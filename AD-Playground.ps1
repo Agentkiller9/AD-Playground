@@ -765,20 +765,31 @@ function Deploy-Lab-E9 {
     # misconfigured to allow anonymous directory listing - a realistic and common
     # pentest finding. Students enumerate with nmap, then browse/download via curl.
 
-    # Install IIS if not already present (one-time Windows feature install)
-    $iisFeature = Get-WindowsFeature -Name "Web-Server" -ErrorAction SilentlyContinue
-    if ($iisFeature -and -not $iisFeature.Installed) {
-        Write-Status "Installing IIS (Web-Server feature - first time only, ~60 s)..." WORK
-        Install-WindowsFeature -Name "Web-Server" -IncludeManagementTools | Out-Null
+    # Install the three IIS role services needed for anonymous static-file + dir-listing.
+    # Web-Static-Content lets IIS serve .txt files.
+    # Web-Dir-Browsing   is the feature that enables directory listings;
+    #                    web.config alone cannot turn it on if the feature is absent.
+    $features = @("Web-Server","Web-Static-Content","Web-Dir-Browsing")
+    $missing  = $features | Where-Object { -not (Get-WindowsFeature -Name $_ -EA SilentlyContinue).Installed }
+    if ($missing) {
+        Write-Status "Installing IIS features ($($missing -join ', ')) - first time, ~60 s..." WORK
+        Install-WindowsFeature -Name $missing -IncludeManagementTools | Out-Null
     }
 
-    # Copy lab files into a /staff/ subdirectory under the default IIS site
+    # Copy lab files into /staff/ under the default IIS site root
     $wwwStaff = "C:\inetpub\wwwroot\staff"
     New-Item -ItemType Directory -Force -Path $wwwStaff | Out-Null
     Copy-Item "$sharePath\*" $wwwStaff -Force -ErrorAction SilentlyContinue
 
-    # web.config: enable directory browsing, disable default document so the
-    # file listing is shown immediately when students browse to /staff/
+    # Enable directory browsing at the IIS server level (WebAdministration module)
+    # This is required in addition to web.config when the feature was just installed.
+    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    if (Get-Module WebAdministration -ErrorAction SilentlyContinue) {
+        Set-WebConfigurationProperty -Filter '/system.webServer/directoryBrowse' `
+            -Name 'enabled' -Value $true -PSPath 'IIS:\' -ErrorAction SilentlyContinue
+    }
+
+    # web.config in /staff/: enable dir browsing, disable default document
     @"
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
@@ -789,15 +800,36 @@ function Deploy-Lab-E9 {
 </configuration>
 "@ | Set-Content "$wwwStaff\web.config" -Encoding UTF8
 
-    # Ensure the IIS service is running
+    # index.html fallback - renders as a believable internal HR portal so the lab
+    # works even if a GPO or higher-level web.config overrides directory browsing.
+    $domainLabel = $Global:ADPConfig.Domain.ToUpper()
+    @"
+<!DOCTYPE html>
+<html><head><title>$domainLabel - Staff Portal</title></head>
+<body style="font-family:Arial,sans-serif;padding:30px;background:#f0f0f0">
+<h2>$domainLabel Internal Staff Portal</h2>
+<p style="color:darkred"><strong>INTERNAL USE ONLY -- Authorised Personnel Only</strong></p>
+<p>HR directory exports, updated weekly. Contact IT-Helpdesk for access issues.</p>
+<ul>
+  <li><a href="users.txt">users.txt</a> -- Active staff usernames</li>
+  <li><a href="emails.txt">emails.txt</a> -- Staff email addresses</li>
+  <li><a href="staff_directory.txt">staff_directory.txt</a> -- Full staff directory</li>
+</ul>
+</body></html>
+"@ | Set-Content "$wwwStaff\index.html" -Encoding UTF8
+
+    # Restart IIS so all config changes (feature install, web.config) take effect
     Start-Service W3SVC -ErrorAction SilentlyContinue
+    & "$env:SystemRoot\System32\inetsrv\iisreset.exe" /restart /noforce 2>&1 | Out-Null
+    Start-Sleep -Seconds 3
 
-    # Allow inbound HTTP on port 80 through Windows Firewall
+    # Firewall: allow inbound port 80 on ALL profiles (Domain/Private/Public)
+    # so Tailscale / host-only / bridged VM networks all work
     netsh advfirewall firewall delete rule name="ADPLab-E9-IIS" | Out-Null
-    netsh advfirewall firewall add rule name="ADPLab-E9-IIS" dir=in action=allow protocol=TCP localport=80 | Out-Null
+    netsh advfirewall firewall add rule name="ADPLab-E9-IIS" `
+        dir=in action=allow protocol=TCP localport=80 profile=any | Out-Null
 
-    # Verify IIS is actually listening
-    Write-Status "Waiting for IIS to start on port 80..." WORK
+    # Liveness check: verify port 80 is listening
     $up = $false
     for ($t = 0; $t -lt 10; $t++) {
         Start-Sleep -Milliseconds 500
@@ -805,11 +837,18 @@ function Deploy-Lab-E9 {
             $up = $true; break
         }
     }
-
     if (-not $up) {
         Write-Status "IIS is not listening on port 80. Check IIS installation." FAIL
-        Write-Status "Run: Install-WindowsFeature Web-Server -IncludeManagementTools" INFO
+        Write-Status "Run: Install-WindowsFeature Web-Server,Web-Static-Content,Web-Dir-Browsing" INFO
         return
+    }
+
+    # Local HTTP round-trip check - confirms IIS actually serves the file
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost/staff/users.txt" -UseBasicParsing -TimeoutSec 5 -EA Stop
+        Write-Status "IIS local self-check: HTTP $($r.StatusCode) - users.txt served OK." OK
+    } catch {
+        Write-Status "IIS local check failed: $_ - try Teardown + re-deploy." WARN
     }
 
     Add-ActiveLab "E9-User-Enum"
@@ -825,8 +864,8 @@ function Teardown-Lab-E9 {
         Remove-ADUser -Identity $u -Confirm:$false -ErrorAction SilentlyContinue
     }
 
-    # Remove the IIS /staff/ directory - do NOT stop IIS or uninstall Web-Server
-    # since IIS may have been present before the lab was deployed.
+    # Remove the IIS /staff/ directory and staging folder.
+    # Do NOT stop IIS or uninstall Web-Server - it may have been pre-existing.
     Remove-Item -Recurse -Force "C:\inetpub\wwwroot\staff" -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force "C:\ADPLab_Staff"           -ErrorAction SilentlyContinue
 
@@ -1918,19 +1957,20 @@ function Invoke-SelfTest {
     Write-Color "  Checks every active lab against the live AD state." DarkGray
     Write-Host ""
 
-    $pass = 0; $fail = 0; $skip = 0
+    # Counters at script scope so the nested Run-Check function can increment them
+    $script:_stPass = 0; $script:_stFail = 0; $script:_stSkip = 0
 
     # ── Helper: run a check and score it ─────────────────────────────────────
     function Run-Check {
         param([string]$LabId, [string]$Desc, [scriptblock]$Check)
         $active = $Global:ADPState.ActiveLabs | Where-Object { $_ -like "$LabId*" }
-        if (-not $active) { $script:skip++; Test-Skip "$LabId  -  $Desc  (not deployed)"; return }
+        if (-not $active) { $script:_stSkip++; Test-Skip "$LabId  -  $Desc  (not deployed)"; return }
         try {
             $ok = & $Check
-            if ($ok) { $script:pass++; Test-Pass "$LabId  -  $Desc" }
-            else      { $script:fail++; Test-Fail "$LabId  -  $Desc" }
+            if ($ok) { $script:_stPass++; Test-Pass "$LabId  -  $Desc" }
+            else      { $script:_stFail++; Test-Fail "$LabId  -  $Desc" }
         } catch {
-            $script:fail++; Test-Fail "$LabId  -  $Desc  (exception: $_)"
+            $script:_stFail++; Test-Fail "$LabId  -  $Desc  (exception: $_)"
         }
     }
 
@@ -2127,15 +2167,15 @@ function Invoke-SelfTest {
     # ── SUMMARY ───────────────────────────────────────────────────────────────
     Write-Color "  ┌────────────────────────────────────────────────┐" DarkCyan
     Write-Color "  │  Results: " DarkCyan -NoNewline
-    Write-Color "$pass PASS  " Green -NoNewline
-    Write-Color "$fail FAIL  " Red -NoNewline
-    Write-Color "$skip SKIP" DarkGray -NoNewline
+    Write-Color "$($script:_stPass) PASS  " Green -NoNewline
+    Write-Color "$($script:_stFail) FAIL  " Red -NoNewline
+    Write-Color "$($script:_stSkip) SKIP" DarkGray -NoNewline
     Write-Color "             │" DarkCyan
     Write-Color "  └────────────────────────────────────────────────┘" DarkCyan
 
-    if ($fail -gt 0) {
+    if ($script:_stFail -gt 0) {
         Write-Host ""
-        Write-Status "$fail check(s) failed. Deploy the relevant lab or re-run after deploying." WARN
+        Write-Status "$($script:_stFail) check(s) failed. Deploy the relevant lab or re-run after deploying." WARN
     }
     Pause-Menu
 }
