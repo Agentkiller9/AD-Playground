@@ -65,36 +65,47 @@ function Write-Color {
 
 function Write-Banner {
     Clear-Host
-    Write-Color "  " -NoNewline
-    Write-Color "╔══════════════════════════════════════════════════════════════╗" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "           █████╗ ██████╗       ██████╗ ██╗      █████╗██╗   ██╗" Red -NoNewline
-    Write-Color "      ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "          ██╔══██╗██╔══██╗      ██╔══██╗██║     ██╔══██╚██╗ ██╔╝" Red -NoNewline
-    Write-Color "     ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "          ███████║██║  ██║█████╗██████╔╝██║     ███████║╚████╔╝" Red -NoNewline
-    Write-Color "      ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "          ██╔══██║██║  ██║╚════╝██╔═══╝ ██║     ██╔══██║ ╚██╔╝" Red -NoNewline
-    Write-Color "       ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "          ██║  ██║██████╔╝      ██║     ███████╗██║  ██║  ██║" Red -NoNewline
-    Write-Color "         ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "╠══════════════════════════════════════════════════════════════╣" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "║" Cyan -NoNewline
-    Write-Color "       Vulnerable AD Lab  |  Red Team Training Platform" Yellow -NoNewline
-    Write-Color "         ║" Cyan
-    Write-Color "  " -NoNewline
-    Write-Color "╚══════════════════════════════════════════════════════════════╝" Cyan
+
+    # ANSI Shadow figlet for "AD-PLAY" — every line is now the same width.
+    # The trailing spaces on each line ensure the right edges are uniform,
+    # which is what makes the ║ box edge render symmetrically.
+    $art = @(
+        " █████╗ ██████╗       ██████╗ ██╗      █████╗ ██╗   ██╗ ",
+        "██╔══██╗██╔══██╗      ██╔══██╗██║     ██╔══██╗╚██╗ ██╔╝ ",
+        "███████║██║  ██║█████╗██████╔╝██║     ███████║ ╚████╔╝  ",
+        "██╔══██║██║  ██║╚════╝██╔═══╝ ██║     ██╔══██║  ╚██╔╝   ",
+        "██║  ██║██████╔╝      ██║     ███████╗██║  ██║   ██║    ",
+        "╚═╝  ╚═╝╚═════╝       ╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝    "
+    )
+    $tag1 = "Vulnerable Active Directory Lab Suite"
+    $tag2 = "Red Team Training Platform  |  v1.0"
+
+    # Inner width is the longest line + 6 chars margin on each side
+    $artMax = ($art | Measure-Object -Property Length -Maximum).Maximum
+    $tagMax = [math]::Max($tag1.Length, $tag2.Length)
+    $inner  = [math]::Max($artMax, $tagMax) + 8   # 4-char gutter each side
+    $bar    = "═" * $inner
+
+    function Write-BannerLine {
+        param([string]$Text, [ConsoleColor]$Color = "White")
+        $padTotal = $inner - $Text.Length
+        $padL = [math]::Floor($padTotal / 2)
+        $padR = $padTotal - $padL
+        Write-Color "  ║" Cyan -NoNewline
+        Write-Color (" " * $padL) -NoNewline
+        Write-Color $Text $Color -NoNewline
+        Write-Color (" " * $padR) -NoNewline
+        Write-Color "║" Cyan
+    }
+
+    Write-Color "  ╔$bar╗" Cyan
+    Write-BannerLine ""
+    foreach ($line in $art) { Write-BannerLine $line Red }
+    Write-BannerLine ""
+    Write-BannerLine $tag1 Yellow
+    Write-BannerLine $tag2 DarkGray
+    Write-BannerLine ""
+    Write-Color "  ╚$bar╝" Cyan
     Write-Host ""
 }
 

