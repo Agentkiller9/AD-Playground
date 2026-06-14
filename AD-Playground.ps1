@@ -1894,6 +1894,79 @@ $Global:LabCatalog = @{
     )
 }
 
+function Deploy-AllLabs {
+    <#
+    .SYNOPSIS Deploy every lab in the catalog in one shot.
+    .NOTES    Designed for instructor / intern handoff scenarios where you want a
+              fully populated attack surface waiting before students log in.
+              Idempotent: skips any lab already in $ADPState.ActiveLabs.
+    #>
+    if (-not (Assert-Baseline)) { return }
+
+    Write-Banner
+    Write-SectionHeader "Deploy ALL Labs (31 total)"
+    Write-Color "  This will deploy every lab in the catalog at once." DarkGray
+    Write-Color "  Some labs (E9 IIS feature install, L3 GPO modification)" DarkGray
+    Write-Color "  take 30-90s each. Total estimated time: 5-10 minutes." DarkGray
+    Write-Host ""
+    Write-Color "  Already-deployed labs are skipped (idempotent)." Yellow
+    Write-Host ""
+    $confirm = Get-MenuChoice "Type YES to confirm"
+    if ($confirm -ne "YES") {
+        Write-Status "Cancelled." WARN
+        Pause-Menu
+        return
+    }
+
+    $allLabs = @(
+        "E1","E2","E3","E4","E5","E6","E7","E8","E9","E10",
+        "C1","C2","C3","C4","C5","C6",
+        "A1","A2","A3","A4","A5",
+        "D1","D2","D3",
+        "L1","L2","L3",
+        "P1","P2","P3","P4"
+    )
+
+    $start    = Get-Date
+    $deployed = 0; $skipped = 0; $failed = 0
+    $idx      = 0
+
+    foreach ($lab in $allLabs) {
+        $idx++
+        Write-Host ""
+        Write-Color ("  --- [{0,2}/31] {1} " -f $idx, $lab) DarkCyan -NoNewline
+        Write-Color ("-" * (52 - $lab.Length)) DarkCyan
+
+        # Skip if already active (by prefix match against ActiveLabs entries)
+        $alreadyActive = $Global:ADPState.ActiveLabs | Where-Object { $_ -like "$lab-*" }
+        if ($alreadyActive) {
+            Write-Status "Already deployed -- skipping" INFO
+            $skipped++
+            continue
+        }
+
+        try {
+            & $Global:LabDeployMap[$lab]
+            $deployed++
+        } catch {
+            Write-Status "FAILED: $_" FAIL
+            $failed++
+        }
+        Start-Sleep -Milliseconds 200
+    }
+
+    $elapsed = (Get-Date) - $start
+    Write-Host ""
+    Write-Color "  +------------------------------------------------------+" Green
+    Write-Color "  |  Deploy-All Complete                                 |" Green
+    Write-Color ("  |  Deployed: {0,2}   Skipped: {1,2}   Failed: {2,2}   Time: {3:mm\:ss}   |" -f $deployed, $skipped, $failed, $elapsed) Green
+    Write-Color "  +------------------------------------------------------+" Green
+    Write-Host ""
+    Write-Status "Run [6] Self-Test Suite to verify all labs are operational." INFO
+    Write-Status "Teardown all labs via Main Menu [5] -> [2] Teardown all active labs." INFO
+    Pause-Menu
+}
+
 function Show-LabsMenu {
     while ($true) {
         Write-Banner
@@ -1905,6 +1978,8 @@ function Show-LabsMenu {
         Write-MenuItem "5" "Lateral Movement    ( 3 labs)" DarkYellow
         Write-MenuItem "6" "Persistence         ( 4 labs)" Magenta
         Write-Host ""
+        Write-MenuItem "A" "Deploy ALL labs (31)" Green
+        Write-Host ""
         Write-MenuItem "B" "Back" DarkGray
 
         $choice = Get-MenuChoice "Category"
@@ -1915,6 +1990,7 @@ function Show-LabsMenu {
             "4" { Show-LabSubMenu -Category "Delegation"         -Labs $Global:LabCatalog.Delegation }
             "5" { Show-LabSubMenu -Category "Lateral Movement"   -Labs $Global:LabCatalog.Lateral }
             "6" { Show-LabSubMenu -Category "Persistence"        -Labs $Global:LabCatalog.Persistence }
+            { $_ -in "A","a" } { Deploy-AllLabs }
             { $_ -in "B","b" } { return }
         }
     }
